@@ -1,0 +1,71 @@
+# Created by Metrum AI for AMD
+
+# Production config: yolo26s-detect (small), raw_onnx backend, FP16, 384x384
+# Benchmarked result: ~1,400 FPS total (2 replicas × 700 FPS), p50=42ms, p95=50ms
+#
+# ----------------------------------------------------------------------------
+# What lives here vs. what lives in .env
+# ----------------------------------------------------------------------------
+# This file holds *perf-tuned* and *structural* config — values arrived at
+# through benchmarking (batch sizes, MIGraphX flags, infer resolutions) and
+# build artifacts (ONNX paths). Don't change them casually; they encode the
+# benchmark result above.
+#
+# Per-deployment knobs (stream count, RTSP host, GPU IDs, MediaMTX host,
+# density display count) are NOT defined here — they're driven by env vars
+# documented in .env.example and resolved in
+# combined_pipeline/control/startup.py::_apply_env_overrides. That keeps a
+# single source of truth for things that legitimately vary per deployment.
+# ----------------------------------------------------------------------------
+
+streams:
+  yolo_output_suffix: "_yolo"
+  density_output_suffix: "_density"
+  paired_output_suffix: "_paired"
+  gpu_count: 1               # multi-GPU stream sharding factor; perf-tuned
+
+ingest:
+  decode_mode: "software"
+
+yolo:
+  model_path: "/app/models/yolo26s-384-dynamic.onnx"
+  backend: "raw_onnx"
+  batch_size: 32
+  batch_timeout_ms: 10
+  infer_width: 384
+  infer_height: 384
+  conf_threshold: 0.25
+  iou_threshold: 0.45
+  max_detections: 100
+  warmup_batch_sizes: [1, 16]
+  replicas_per_gpu: 2
+  migraphx_options:
+    migraphx_fp16_enable: "1"
+
+density:
+  enabled: true
+  weights_path: "/app/models/model_sh_B.pth"
+  onnx_path: "/app/models/dm_count_b8_160x120.onnx"
+  gpu_id: 0                  # logical GPU index inside the isolated process
+  batch_size: 8
+  batch_timeout_ms: 20
+  infer_width: 160
+  infer_height: 120
+  migraphx_options:
+    migraphx_fp16_enable: "1"
+
+output:
+  fps: 30
+  encode_mode: "software"
+  full_width: 640
+  full_height: 640
+
+shmem:
+  slots_per_stream: 4
+
+mediamtx:
+  rtsp_port: 8554            # protocol constants — wire-level, not deployment
+  webrtc_http_port: 8889
+
+runtime:
+  stop_after_seconds: 0

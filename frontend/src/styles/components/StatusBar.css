@@ -1,0 +1,55 @@
+/* Created by Metrum AI for AMD */
+
+.statusbar {
+  height: 28px;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 18px;
+  gap: 18px;
+  flex-shrink: 0;
+  z-index: 100;
+}
+
+.statusbar__item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-sm);
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.statusbar__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.statusbar__dot.live {
+  animation: pulse-soft 2s ease-in-out infinite;
+}
+
+.statusbar__spacer {
+  flex: 1;
+}
+
+.statusbar__right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.statusbar__logo {
+  height: 13px;
+  opacity: .3;
+}
+
+.statusbar__ts {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  letter-spacing: .02em;
+}

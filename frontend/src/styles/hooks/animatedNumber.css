@@ -1,0 +1,34 @@
+/* Created by Metrum AI for AMD */
+
+.odometer {
+  display: inline-flex;
+  align-items: baseline;
+  overflow: hidden;
+  line-height: 1;
+}
+
+.odometer__slot {
+  display: inline-block;
+  width: 0.62em;
+  height: 1em;
+  overflow: hidden;
+  position: relative;
+}
+
+.odometer__reel {
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+.odometer__digit {
+  display: block;
+  height: 1em;
+  line-height: 1;
+  text-align: center;
+}
+
+.odometer__sep {
+  display: inline-block;
+}

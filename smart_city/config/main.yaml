@@ -1,0 +1,71 @@
+# Created by Metrum AI for AMD
+
+system:
+  # Set NUM_GPUS env var to match physical Radeon GPU count (1–8)
+  num_gpus: "${NUM_GPUS:-2}"
+  # Maximum RTSP streams; auto-discovery scans RTSP_CAM_1_URL … RTSP_CAM_N_URL
+  max_streams: "${NUM_STREAMS:-8}"
+  frame_workers: 4
+  log_level: "INFO"
+
+pipeline:
+  batch_size: 48
+  batch_timeout_ms: 20
+  model_path: "smart_city/models/yolov26-seg.pt"
+  conf_threshold: 0.25
+  iou_threshold: 0.45
+
+ingestion:
+  reconnect_max_attempts: 10
+  reconnect_base_delay_s: 1
+  frame_queue_size: 500
+
+adaptive_fps:
+  critical_fps: 30
+  medium_fps: 15
+  low_fps: 5
+
+llm:
+  base_url: "${VLLM_BASE_URL:-http://lemonade:13305}"
+  model: "${VLLM_SERVED_MODEL_NAME:-qwen}"
+  # API key for hosted providers (e.g. OpenRouter). Leave empty for local vLLM.
+  api_key: "${LLM_API_KEY:-}"
+  max_tokens: 8000
+  temperature: 0.1
+  stream: true
+
+rag:
+  milvus_host: "milvus"
+  milvus_port: 19530
+  collection_name: "city_guidelines"
+  embedding_model: "BAAI/bge-small-en-v1.5"
+  # HTTP embedding service (vLLM CPU).  Empty = use local sentence-transformers.
+  embed_base_url: "${EMBED_BASE_URL:-http://vllm-embed:8000}"
+  top_k: 5
+  chunk_size: 500
+  chunk_overlap: 50
+  # Directory of .txt / .md / .pdf files to ingest on startup
+  docs_ingest_path: "${DOCS_INGEST_PATH:-/app/data/docs}"
+  # Glob patterns (comma-separated) for document files to ingest
+  docs_glob: "**/*.txt,**/*.md,**/*.pdf"
+
+storage:
+  database_url: "${DATABASE_URL}"
+  pool_size: 20
+  pool_max_overflow: 10
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins:
+    - "http://localhost:5173"
+    - "http://localhost:3000"
+    - "http://localhost:80"
+
+metrics:
+  prometheus_port: 9090
+  enabled: true
+
+simulator:
+  # Days of real live data before simulator mode auto-retires (7 | 30 | 90)
+  retire_after_days: "${SIMULATE_RETIRE_AFTER_DAYS:-7}"

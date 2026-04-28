@@ -1,0 +1,308 @@
+# Created by Metrum AI for AMD
+
+version: 1
+streams:
+- id: 1
+  location_name: Congress Avenue Main Plaza
+  zone_id: congress_plaza_main
+  zone_type: crowd_density
+  lat: 30.2672
+  lon: -97.7431
+  city: Austin Downtown, TX
+  threshold_critical: 15
+- id: 2
+  location_name: Congress Vehicle Exclusion Zone
+  zone_id: congress_vehicle_exclusion
+  zone_type: crowd_density
+  lat: 30.2686
+  lon: -97.7424
+  city: Austin Downtown, TX
+  threshold_critical: 15
+- id: 3
+  location_name: Texas State Capitol Grounds
+  lat: 30.2747
+  lon: -97.7403
+  city: Austin Downtown, TX
+  threshold_critical: 15
+- id: 4
+  location_name: 6th Street Entertainment District
+  lat: 30.2669
+  lon: -97.7409
+  city: Austin Downtown, TX
+  threshold_critical: 15
+- id: 5
+  location_name: Rainey Street Entrance
+  lat: 30.2584
+  lon: -97.7383
+  city: Austin Downtown, TX
+  threshold_critical: 15
+- id: 6
+  location_name: Austin Convention Center North
+  lat: 30.2633
+  lon: -97.7387
+  city: Austin Downtown, TX
+  threshold_critical: 15
+- id: 7
+  location_name: Austin Convention Center South
+  lat: 30.2618
+  lon: -97.7391
+  city: Austin Downtown, TX
+  threshold_critical: 15
+- id: 8
+  location_name: Cesar Chavez & Congress
+  lat: 30.262
+  lon: -97.7428
+  city: Austin Downtown, TX
+  threshold_critical: 15
+- id: 9
+  location_name: 2nd Street District
+  lat: 30.2656
+  lon: -97.7453
+  city: Austin Downtown, TX
+  threshold_critical: 15
+- id: 10
+  location_name: Seaholm District Plaza
+  lat: 30.2693
+  lon: -97.7513
+  city: Austin Downtown, TX
+  threshold_critical: 15
+- id: 11
+  location_name: Republic Square Park
+  lat: 30.2661
+  lon: -97.7467
+  city: Austin Downtown, TX
+  threshold_critical: 15
+- id: 12
+  location_name: Whole Foods Market Area
+  lat: 30.2694
+  lon: -97.7494
+  city: Austin Downtown, TX
+  threshold_critical: 15
+- id: 13
+  location_name: Palmer Events Center
+  lat: 30.2569
+  lon: -97.7498
+  city: Austin Downtown, TX
+  threshold_critical: 15
+- id: 14
+  location_name: South Congress & Riverside
+  lat: 30.2509
+  lon: -97.7502
+  city: Austin Downtown, TX
+  threshold_critical: 15
+- id: 15
+  location_name: Barton Springs Entrance
+  lat: 30.2641
+  lon: -97.7724
+  city: Austin Downtown, TX
+  threshold_critical: 15
+- id: 16
+  location_name: Guadalupe & 24th St (UT)
+  lat: 30.2869
+  lon: -97.7388
+  city: Austin Downtown, TX
+  threshold_critical: 15
+- id: 17
+  location_name: UT Tower Mall
+  lat: 30.2861
+  lon: -97.7394
+  city: Austin Downtown, TX
+  threshold_critical: 15
+- id: 18
+  location_name: East 6th & Waller
+  lat: 30.2668
+  lon: -97.7302
+  city: Austin Downtown, TX
+  threshold_critical: 15
+- id: 19
+  location_name: Domain Northside Plaza
+  lat: 30.4026
+  lon: -97.7276
+  city: Austin Downtown, TX
+  threshold_critical: 15
+- id: 20
+  location_name: South Lamar & Oltorf
+  lat: 30.2475
+  lon: -97.7674
+  city: Austin Downtown, TX
+  threshold_critical: 15
+- id: 21
+  location_name: Dealey Plaza Main
+  lat: 32.7792
+  lon: -96.8081
+  city: Dallas Downtown, TX
+  threshold_critical: 15
+- id: 22
+  location_name: Klyde Warren Park East
+  lat: 32.7893
+  lon: -96.8018
+  city: Dallas Downtown, TX
+  threshold_critical: 15
+- id: 23
+  location_name: Klyde Warren Park West
+  lat: 32.7892
+  lon: -96.8039
+  city: Dallas Downtown, TX
+  threshold_critical: 15
+- id: 24
+  location_name: Main Street & Akard
+  lat: 32.7797
+  lon: -96.7972
+  city: Dallas Downtown, TX
+  threshold_critical: 15
+- id: 25
+  location_name: Dallas Arts District
+  lat: 32.7886
+  lon: -96.7987
+  city: Dallas Downtown, TX
+  threshold_critical: 15
+- id: 26
+  location_name: West End Historic District
+  lat: 32.7822
+  lon: -96.8069
+  city: Dallas Downtown, TX
+  threshold_critical: 15
+- id: 27
+  location_name: Deep Ellum Main Strip
+  lat: 32.7844
+  lon: -96.7807
+  city: Dallas Downtown, TX
+  threshold_critical: 15
+- id: 28
+  location_name: AT&T Discovery District
+  lat: 32.781
+  lon: -96.7977
+  city: Dallas Downtown, TX
+  threshold_critical: 15
+- id: 29
+  location_name: Dallas City Hall Plaza
+  lat: 32.7747
+  lon: -96.8016
+  city: Dallas Downtown, TX
+  threshold_critical: 15
+- id: 30
+  location_name: Victory Park Plaza
+  lat: 32.7916
+  lon: -96.8112
+  city: Dallas Downtown, TX
+  threshold_critical: 15
+- id: 31
+  location_name: Reunion Tower Area
+  lat: 32.7754
+  lon: -96.8082
+  city: Dallas Downtown, TX
+  threshold_critical: 15
+- id: 32
+  location_name: Uptown Henderson Corridor
+  lat: 32.8039
+  lon: -96.7974
+  city: Dallas Downtown, TX
+  threshold_critical: 15
+- id: 33
+  location_name: Mockingbird Station
+  lat: 32.8383
+  lon: -96.7714
+  city: Dallas Downtown, TX
+  threshold_critical: 15
+- id: 34
+  location_name: Bishop Arts District
+  lat: 32.7468
+  lon: -96.8274
+  city: Dallas Downtown, TX
+  threshold_critical: 15
+- id: 35
+  location_name: NorthPark Center Entrance
+  lat: 32.8679
+  lon: -96.7746
+  city: Dallas Downtown, TX
+  threshold_critical: 15
+- id: 36
+  location_name: Minute Maid Park Main Gate
+  lat: 29.7573
+  lon: -95.3553
+  city: Houston Downtown, TX
+  threshold_critical: 15
+- id: 37
+  location_name: Discovery Green Park
+  lat: 29.7544
+  lon: -95.3628
+  city: Houston Downtown, TX
+  threshold_critical: 15
+- id: 38
+  location_name: Houston Convention Center West
+  lat: 29.7531
+  lon: -95.3679
+  city: Houston Downtown, TX
+  threshold_critical: 15
+- id: 39
+  location_name: Houston Convention Center East
+  lat: 29.7532
+  lon: -95.3601
+  city: Houston Downtown, TX
+  threshold_critical: 15
+- id: 40
+  location_name: Main Street Square
+  lat: 29.7588
+  lon: -95.3677
+  city: Houston Downtown, TX
+  threshold_critical: 15
+- id: 41
+  location_name: Market Square Park
+  lat: 29.7607
+  lon: -95.3679
+  city: Houston Downtown, TX
+  threshold_critical: 15
+- id: 42
+  location_name: Houston Theater District
+  lat: 29.7628
+  lon: -95.3731
+  city: Houston Downtown, TX
+  threshold_critical: 15
+- id: 43
+  location_name: Midtown Bagby Street
+  lat: 29.7484
+  lon: -95.3779
+  city: Houston Downtown, TX
+  threshold_critical: 15
+- id: 44
+  location_name: Montrose Blvd & Westheimer
+  lat: 29.7394
+  lon: -95.3902
+  city: Houston Downtown, TX
+  threshold_critical: 15
+- id: 45
+  location_name: Buffalo Bayou Park East
+  lat: 29.7633
+  lon: -95.3784
+  city: Houston Downtown, TX
+  threshold_critical: 15
+- id: 46
+  location_name: Buffalo Bayou Park West
+  lat: 29.7624
+  lon: -95.3913
+  city: Houston Downtown, TX
+  threshold_critical: 15
+- id: 47
+  location_name: Rice University Entrance
+  lat: 29.7174
+  lon: -95.4018
+  city: Houston Downtown, TX
+  threshold_critical: 15
+- id: 48
+  location_name: Museum of Fine Arts Houston
+  lat: 29.7257
+  lon: -95.3908
+  city: Houston Downtown, TX
+  threshold_critical: 15
+- id: 49
+  location_name: NRG Stadium Concourse
+  lat: 29.6847
+  lon: -95.4107
+  city: Houston Downtown, TX
+  threshold_critical: 15
+- id: 50
+  location_name: The Galleria Main Entrance
+  lat: 29.74
+  lon: -95.4636
+  city: Houston Downtown, TX
+  threshold_critical: 15

@@ -1,0 +1,375 @@
+/* Created by Metrum AI for AMD */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* ============================================================
+   AMD Klavika - Official AMD Typeface (TopBar brand identity)
+   ============================================================ */
+@font-face {
+  font-family: 'Klavika';
+  src: url('./assets/KlavikaLight.otf') format('opentype');
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Klavika';
+  src: url('./assets/KlavikaRegular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Klavika';
+  src: url('./assets/KlavikaMedium.otf') format('opentype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Klavika';
+  src: url('./assets/KlavikaBold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Klavika';
+  src: url('./assets/KlavikaLightItalic.otf') format('opentype');
+  font-weight: 300;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Klavika';
+  src: url('./assets/KlavikaItalic.otf') format('opentype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Klavika';
+  src: url('./assets/KlavikaMediumItalic.otf') format('opentype');
+  font-weight: 500;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Klavika';
+  src: url('./assets/KlavikaBoldItalic.otf') format('opentype');
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Klavika Condensed';
+  src: url('./assets/KlavikaCondensedLight.otf') format('opentype');
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Klavika Condensed';
+  src: url('./assets/KlavikaCondensedRegular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Klavika Condensed';
+  src: url('./assets/KlavikaCondensedMedium.otf') format('opentype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Klavika Condensed';
+  src: url('./assets/KlavikaCondensedBold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Klavika Condensed';
+  src: url('./assets/KlavikaCondensedLightItalic.otf') format('opentype');
+  font-weight: 300;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Klavika Condensed';
+  src: url('./assets/KlavikaCondensedItalic.otf') format('opentype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Klavika Condensed';
+  src: url('./assets/KlavikaCondensedMediumItalic.otf') format('opentype');
+  font-weight: 500;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Klavika Condensed';
+  src: url('./assets/KlavikaCondensedBoldItalic.otf') format('opentype');
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  /* AMD Primary */
+  --amd-red: #ED1C24;
+  --amd-orange: #F26522;
+  --amd-teal: #007C97;
+
+  /* AMD Neutral */
+  --amd-black: #000000;
+  --amd-dark-gray: #27282B;
+  --amd-cool-gray: #636466;
+  --amd-light-gray: #9D9FA2;
+  --amd-white: #FFFFFF;
+
+  /* Backgrounds */
+  --bg-base: #08080A;
+  --bg-surface: #0E0E11;
+  --bg-elevated: #151518;
+  --bg-card: #121215;
+  --bg-hover: #1C1C20;
+  --bg-glass: rgba(14, 14, 17, 0.85);
+
+  /* Borders */
+  --border: #1E1E22;
+  --border-light: #2A2A2F;
+  --border-accent: rgba(237, 28, 36, 0.15);
+
+  /* Text */
+  --text-primary: #F0F0F0;
+  --text-secondary: #9D9FA2;
+  --text-muted: #8A8B8E;
+  --text-dim: #5A5A5F;
+
+  /* Severity */
+  --sev-critical: #ED1C24;
+  --sev-critical-bg: rgba(237, 28, 36, 0.08);
+  --sev-high: #F26522;
+  --sev-high-bg: rgba(242, 101, 34, 0.08);
+  --sev-medium: #007C97;
+  --sev-medium-bg: rgba(0, 124, 151, 0.08);
+  --sev-safe: #22C55E;
+  --sev-safe-bg: rgba(34, 197, 94, 0.08);
+
+  /* Typography */
+  --font: 'Inter', sans-serif;
+  --font-brand: 'Klavika';
+  --font-condensed: 'Klavika Condensed';
+  --font-mono: 'Geist Mono Variable';
+
+  /* Font size scale (+15% bump) */
+  --fs-xs: 11px;
+  --fs-sm: 14px;
+  --fs-base: 15px;
+  --fs-md: 16px;
+  --fs-lg: 18px;
+  --fs-xl: 23px;
+  --fs-2xl: 37px;
+  --fs-mono-sm: 14px;
+  --fs-mono-lg: 21px;
+
+  /* Shape */
+  --radius: 8px;
+  --radius-sm: 4px;
+  --radius-lg: 12px;
+
+  /* Elevation */
+  --shadow: 0 8px 32px rgba(0, 0, 0, .6);
+  --shadow-sm: 0 2px 12px rgba(0, 0, 0, .4);
+  --shadow-glow: 0 0 32px rgba(237, 28, 36, 0.08);
+
+  /* AMD Gradients */
+  --gradient-amd: linear-gradient(135deg, #ED1C24, #F26522);
+  --gradient-amd-h: linear-gradient(90deg, #ED1C24, #F26522);
+  --gradient-amd-subtle: linear-gradient(135deg, rgba(237, 28, 36, 0.08), rgba(242, 101, 34, 0.02));
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font);
+  font-weight: 400;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'kern' 1, 'liga' 1;
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+}
+
+.main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+/* Unified content panel: houses Planning OR LiveOps */
+.content-panel {
+  flex: 0 0 50%;
+  display: flex;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+  transition: flex .25s ease;
+}
+
+/* When the right sidebar collapses, map stays fixed and freed space goes to content */
+.main--sidebar-collapsed .map-panel {
+  flex: 0 0 calc(50% - 290px);
+}
+
+.main--sidebar-collapsed .content-panel {
+  flex: 1;
+}
+
+.content-panel__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Shared panel styles */
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.panel-title {
+  font-family: var(--font-condensed);
+  font-size: var(--fs-md);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.panel-subtitle {
+  font-size: var(--fs-base);
+  color: var(--text-muted);
+  margin-left: 8px;
+  font-weight: 400;
+}
+
+/* Monospace utility for numerals */
+.mono,
+.kpi-val,
+.cam-count,
+.stat-card__val,
+.sev-chip__count {
+  font-family: var(--font-mono) !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 3px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-light);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
+}
+
+::selection {
+  background: rgba(237, 28, 36, 0.2);
+  color: var(--text-primary);
+}
+
+/* Subtle ambient animation for live feel */
+@keyframes pulse-soft {
+
+  0%,
+  100% {
+    opacity: 1
+  }
+
+  50% {
+    opacity: .6
+  }
+}
+
+@keyframes glow-line {
+  0% {
+    opacity: .3
+  }
+
+  50% {
+    opacity: .7
+  }
+
+  100% {
+    opacity: .3
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px)
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0)
+  }
+}

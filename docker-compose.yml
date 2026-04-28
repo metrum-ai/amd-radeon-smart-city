@@ -1,0 +1,439 @@
+# Created by Metrum AI for AMD
+
+# ============================================================
+# Smart City Public Safety Platform
+# Single Docker Compose file – development and testing.
+# ============================================================
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+
+  # ------------------------------------------------------------
+  # TimescaleDB (PostgreSQL + time-series extension)
+  # ------------------------------------------------------------
+  timescaledb:
+    image: timescale/timescaledb:2.14.2-pg16
+    container_name: smartcity_timescaledb
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-smartcity}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-smartcity_db}
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smartcity}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+  # ------------------------------------------------------------
+  # Milvus vector DB dependencies
+  # ------------------------------------------------------------
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    container_name: smartcity_etcd
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    command: >
+      etcd
+      --advertise-client-urls=http://etcd:2379
+      --listen-client-urls=http://0.0.0.0:2379
+      --data-dir=/etcd
+    volumes:
+      - etcd_data:/etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    logging: *default-logging
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2024-01-18T22-51-28Z
+    container_name: smartcity_minio
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+    command: minio server /minio_data --console-address ":9001"
+    volumes:
+      - minio_data:/minio_data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ------------------------------------------------------------
+  # Milvus (vector DB for LLM RAG)
+  # ------------------------------------------------------------
+  milvus:
+    image: milvusdb/milvus:v2.4.0
+    container_name: smartcity_milvus
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    volumes:
+      - milvus_data:/var/lib/milvus
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ------------------------------------------------------------
+  # vLLM CPU embedding service
+  # Serves BAAI/bge-small-en-v1.5 via OpenAI-compatible /v1/embeddings.
+  # CPU-only – no GPU passthrough required.
+  # ------------------------------------------------------------
+  vllm-embed:
+    # Hugging Face Text Embeddings Inference (TEI) – CPU backend.
+    # Exposes OpenAI-compatible POST /v1/embeddings.
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.6
+    container_name: smartcity_vllm_embed
+    command: --model-id ${EMBED_MODEL:-BAAI/bge-small-en-v1.5} --port 8000
+    volumes:
+      # Mount at /data — TEI's default huggingface_hub_cache path
+      - tei_model_cache:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    logging: *default-logging
+    restart: unless-stopped
+
+
+  lemonade:
+    image: ghcr.io/lemonade-sdk/lemonade-server:latest
+    container_name: smartcity_lemonade
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    volumes:
+      - /opt/smartcity/lemonade/cache:/root/.cache/huggingface
+      - /opt/smartcity/lemonade/llama:/opt/lemonade/llama
+      - /opt/smartcity/lemonade/recipe:/root/.cache/lemonade
+      - ./scripts/lemonade-entrypoint.sh:/entrypoint.sh:ro
+    environment:
+      LEMONADE_LLAMACPP_BACKEND: rocm
+      ROCR_VISIBLE_DEVICES: "${LEMONADE_GPU_ID:-1}"
+      HSA_OVERRIDE_GFX_VERSION: "12.0.1"
+      LEMONADE_MODEL: ${LEMONADE_MODEL:-user.Qwen3-30B-A3B-UD-Q4_K_XL}
+      LEMONADE_CHECKPOINT: ${LEMONADE_CHECKPOINT:-unsloth/Qwen3-30B-A3B-GGUF:UD-Q4_K_XL}
+      # Note: HSA_OVERRIDE_GFX_VERSION pinned at "12.0.1" (gfx1201 / RDNA4 R9700).
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri/card0:/dev/dri/card0
+      - /dev/dri/card1:/dev/dri/card1
+      - /dev/dri/renderD128:/dev/dri/renderD128
+      - /dev/dri/renderD129:/dev/dri/renderD129
+    group_add:
+      - "44"    # video group (GID 44)
+      - "109"   # render group (GID 109)
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:13305/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 600s
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ------------------------------------------------------------
+  # Smart City API backend
+  # ------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: smart_city/Dockerfile
+    container_name: smartcity_api
+    volumes:
+      - reports_data:/app/data/reports
+      # Mount policy documents for RAG ingestion at startup.
+      - ${DOCS_INGEST_PATH:-./smart_city/docs/policy}:/app/data/docs:ro
+      # Shared pipeline stats (written by pipeline container, read by api)
+      - pipeline_stats:/pipeline_stats:ro
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-smartcity}:${POSTGRES_PASSWORD}@timescaledb:5432/${POSTGRES_DB:-smartcity_db}
+      MILVUS_HOST: ${MILVUS_HOST:-milvus}
+      MILVUS_PORT: ${MILVUS_PORT:-19530}
+      # LLM inference — defaults to local lemonade server (GPU 1, ROCm).
+      # Override VLLM_BASE_URL + LLM_API_KEY to use OpenRouter instead.
+      VLLM_BASE_URL: ${VLLM_BASE_URL:-http://lemonade:13305}
+      VLLM_SERVED_MODEL_NAME: ${VLLM_SERVED_MODEL_NAME:-user.Qwen3-30B-A3B-UD-Q4_K_XL}
+      LLM_MODEL: ${LLM_MODEL:-user.Qwen3-30B-A3B-UD-Q4_K_XL}
+      # Leave empty for local lemonade; set to your OpenRouter key to use cloud
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      # Embedding service base URL — points to the TEI container.
+      EMBED_BASE_URL: ${EMBED_BASE_URL:-http://vllm-embed:8000}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      NUM_GPUS: ${NUM_GPUS:-2}
+      NUM_STREAMS: ${STREAM_COUNT:-50}
+      DOCS_INGEST_PATH: /app/data/docs
+      ROCR_VISIBLE_DEVICES: ${ROCR_VISIBLE_DEVICES:-0,1}
+      HSA_OVERRIDE_GFX_VERSION: ${HSA_OVERRIDE_GFX_VERSION:-12.0.1}
+      # Pipeline integration
+      PIPELINE_STATS_FILE: "/pipeline_stats/pipeline_stats.json"
+      STREAMS_METADATA_FILE: "/app/smart_city/config/streams_metadata.yaml"
+      SCRATCH_WEBRTC_BASE_URL: ${SCRATCH_WEBRTC_BASE_URL:-/webrtc}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+      lemonade:
+        condition: service_healthy
+    # AMD ROCm passthrough for YOLO inference
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+      - render
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ------------------------------------------------------------
+  # Metrics exporters (ROCm GPU + host node)
+  # Scrape targets match smart_city/metrics/prometheus.yml.
+  # ------------------------------------------------------------
+  amd-device-metrics-exporter:
+    image: rocm/device-metrics-exporter:v1.4.2
+    container_name: smartcity_amd_device_metrics
+    restart: unless-stopped
+    devices:
+      - /dev/dri:/dev/dri
+      - /dev/kfd:/dev/kfd
+    volumes:
+      - /sys:/sys:ro
+    security_opt:
+      - seccomp:unconfined
+    group_add:
+      - video
+      - render
+    logging: *default-logging
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: smartcity_node_exporter
+    restart: unless-stopped
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+      - >-
+        --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    logging: *default-logging
+
+  # ------------------------------------------------------------
+  # Prometheus
+  # ------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.51.2
+    container_name: smartcity_prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+    volumes:
+      - ./smart_city/metrics/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      api:
+        condition: service_healthy
+      amd-device-metrics-exporter:
+        condition: service_started
+      node-exporter:
+        condition: service_started
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ------------------------------------------------------------
+  # RTSP input publisher — loops test video, publishes to MediaMTX
+  # ------------------------------------------------------------
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: smartcity_mediamtx
+    # No ports exposed directly — all traffic routes through the frontend nginx:
+    #   HTTP/WHEP signaling  → nginx /webrtc/ → mediamtx:8889
+    #   HLS segments         → nginx /hls/    → mediamtx:8888
+    #   WebRTC ICE TCP       → nginx stream   → mediamtx:8189
+    #   RTSP (pipeline only) → mediamtx:8554  (internal Docker network)
+    environment:
+      MTX_HLS: "yes"
+      MTX_HLSADDRESS: :8888
+      MTX_HLSVARIANT: lowLatency
+      MTX_HLSSEGMENTDURATION: 500ms
+      MTX_HLSPARTDURATION: 100ms
+      MTX_RTSPTRANSPORTS: tcp
+      MTX_WEBRTCADDITIONALHOSTS: ${PUBLIC_WEBRTC_HOSTS:-localhost,127.0.0.1}
+      MTX_WEBRTCLOCALTCPADDRESS: :8189
+      # UDP ICE disabled — UDP cannot be proxied by nginx; TCP ICE (above) is
+      # sufficient and is routed via the nginx stream proxy on port 8189.
+      MTX_WEBRTCLOCALUDPADDRESS: ""
+    logging: *default-logging
+    restart: unless-stopped
+
+  rtsp-input-publisher:
+    build:
+      context: ./smart_city/combined_pipeline/docker
+      dockerfile: publisher.Dockerfile
+    container_name: smartcity_rtsp_publisher
+    depends_on:
+      mediamtx:
+        condition: service_started
+    volumes:
+      - ./videos:/videos:ro
+    environment:
+      STREAM_COUNT: "${STREAM_COUNT:-50}"
+      VIDEO_DIR: /videos
+      INPUT_BASE_RTSP: ${INPUT_BASE_RTSP:-rtsp://mediamtx:8554/cam}
+      REALTIME_INPUT: ${REALTIME_INPUT:-1}
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ------------------------------------------------------------
+  # Analytics Pipeline (YOLO + DM-Count on AMD GPUs)
+  # Writes per-stream stats to /tmp/pipeline_stats.json on the
+  # shared `pipeline_stats` volume, consumed by the `api` service.
+  # ------------------------------------------------------------
+  pipeline:
+    build:
+      context: .
+      dockerfile: smart_city/combined_pipeline/docker/Dockerfile
+    container_name: smartcity_pipeline
+    shm_size: "4gb"
+    depends_on:
+      mediamtx:
+        condition: service_started
+      rtsp-input-publisher:
+        condition: service_started
+    devices:
+      - /dev/dri/card0:/dev/dri/card0
+      - /dev/dri/renderD128:/dev/dri/renderD128
+      - /dev/dri/card1:/dev/dri/card1
+      - /dev/dri/renderD129:/dev/dri/renderD129
+      - /dev/kfd:/dev/kfd
+    group_add:
+      - video
+      - render
+    security_opt:
+      - seccomp=unconfined
+    volumes:
+      # Shared volume for pipeline stats JSON (pipeline writes, api reads)
+      - pipeline_stats:/pipeline_stats
+    environment:
+      HSA_OVERRIDE_GFX_VERSION: "12.0.1"
+      # Disable VA-API to prevent it racing with MIGraphX GPU init and causing a KFD hang
+      LIBVA_DRIVER_NAME: "null"
+      LIBVA_DRIVERS_PATH: "/dev/null"
+      ROCR_VISIBLE_DEVICES: "0,1"
+      HSA_VISIBLE_DEVICES: "0,1"
+      STREAM_COUNT: "${STREAM_COUNT:-50}"
+      DENSITY_DISPLAY_STREAMS: "${DENSITY_DISPLAY_STREAMS:-50}"
+      PIPELINE_STATS_FILE: "/pipeline_stats/pipeline_stats.json"
+      YOLO_START_GPU: ${YOLO_GPU_ID:-0}
+      DENSITY_PHYSICAL_GPU: ${DMCOUNT_GPU_ID:-1}
+      MEDIAMTX_HOST: ${MEDIAMTX_HOST:-mediamtx}
+      INPUT_BASE_RTSP: ${INPUT_BASE_RTSP:-rtsp://mediamtx:8554/cam}
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ------------------------------------------------------------
+  # Data Simulator – seeds TimescaleDB with synthetic history
+  # Run with: docker compose --profile seed run --rm simulator
+  # ------------------------------------------------------------
+  simulator:
+    build:
+      context: .
+      dockerfile: smart_city/Dockerfile
+    container_name: smartcity_simulator
+    profiles:
+      - seed
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-smartcity}:${POSTGRES_PASSWORD}@timescaledb:5432/${POSTGRES_DB:-smartcity_db}
+      SIMULATE_RETIRE_AFTER_DAYS: ${SIMULATE_RETIRE_AFTER_DAYS:-7}
+    command: >
+      python -m smart_city.simulator.runner
+      --retire-after ${SIMULATE_RETIRE_AFTER_DAYS:-7}
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+  # ------------------------------------------------------------
+  # Unified gateway (SPA + API + WebRTC reverse proxy)
+  # ------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: smartcity_frontend
+    ports:
+      - "${GATEWAY_HTTP_PORT:-5173}:80"
+      # WebRTC ICE TCP — stream-proxied by nginx to mediamtx:8189 internally.
+      # Set PUBLIC_WEBRTC_HOSTS to the server's external IP so MediaMTX
+      # advertises reachable ICE candidates for remote browsers.
+      - "8189:8189"
+    depends_on:
+      - api
+      - mediamtx
+    logging: *default-logging
+    restart: unless-stopped
+
+volumes:
+  timescaledb_data:    # TimescaleDB persistent storage
+  etcd_data:           # Milvus etcd metadata
+  minio_data:          # Milvus object storage
+  milvus_data:         # Milvus vector index data
+  tei_model_cache:     # TEI embedding model weights (downloaded once)
+  prometheus_data:     # Prometheus metrics history
+  reports_data:        # LLM-generated reports
+  pipeline_stats:      # Pipeline→API stats handoff (JSON)
+  video_input:         # Input video files for RTSP publisher (populate before first run)
+
+networks:
+  default:
+    name: smartcity_net

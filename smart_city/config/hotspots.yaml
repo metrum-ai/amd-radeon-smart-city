@@ -1,0 +1,68 @@
+# Created by Metrum AI for AMD
+
+version: 1
+
+cities:
+  - label: Austin Downtown, TX
+    center: [30.2672, -97.7431]
+    zoom: 13
+  - label: Dallas Downtown, TX
+    center: [32.7767, -96.7970]
+    zoom: 13
+  - label: Houston Downtown, TX
+    center: [29.7604, -95.3698]
+    zoom: 13
+
+main_locations:
+  - id: austin_downtown
+    label: Austin Downtown, TX
+    center: [30.2672, -97.7431]
+    zoom: 13
+    sub_locations:
+      - zone_id: congress_plaza_main
+        label: Congress Avenue Main Plaza
+      - zone_id: congress_vehicle_exclusion
+        label: Congress Vehicle Exclusion Zone
+  - id: dallas_downtown
+    label: Dallas Downtown, TX
+    center: [32.7767, -96.7970]
+    zoom: 13
+    sub_locations:
+      - zone_id: cam24_main
+        label: Main Street & Akard
+      - zone_id: cam27_main
+        label: Deep Ellum Main Strip
+  - id: houston_downtown
+    label: Houston Downtown, TX
+    center: [29.7604, -95.3698]
+    zoom: 13
+    sub_locations:
+      - zone_id: cam37_main
+        label: Discovery Green Park
+      - zone_id: cam45_main
+        label: Buffalo Bayou Park East
+
+location_tags:
+  central:
+    keywords: [austin, congress, plaza, downtown, city hall]
+    video_pool: [crowd_1.mp4, crowd_2.mp4, crowd_3.mp4, crowd_4.mp4]
+  west:
+    keywords: [dallas, market, transit, campus, west]
+    video_pool: [crowd_5.mp4, crowd_6.mp4, crowd_7.mp4]
+  south:
+    keywords: [houston, terminal, construction, site, south]
+    video_pool: [crowd_8.mp4, crowd_9.mp4, crowd_10.mp4]
+
+hotspot_style:
+  critical:
+    color: "#ED1C24"
+    radius: 10
+    pulse: true
+  safe:
+    color: "#22C55E"
+    radius: 6
+    pulse: false
+
+tooltip:
+  width: 220
+  aspect_ratio: "16/9"
