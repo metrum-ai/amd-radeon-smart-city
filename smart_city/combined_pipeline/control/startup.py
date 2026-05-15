@@ -43,6 +43,7 @@ _DEPLOYMENT_DEFAULTS: dict[tuple[str, str], Any] = {
     ("streams", "input_base_rtsp"):  "rtsp://mediamtx:8554/cam",
     ("density", "display_streams"):  50,
     ("density", "physical_gpu"):     1,
+    ("density", "frame_interval"):   1,
     ("mediamtx", "host"):            "mediamtx",
 }
 
@@ -83,6 +84,7 @@ def _apply_env_overrides(cfg: dict[str, Any]) -> dict[str, Any]:
     _resolve(cfg, "mediamtx", "host",            "MEDIAMTX_HOST")
     _resolve(cfg, "density",  "display_streams", "DENSITY_DISPLAY_STREAMS", cast=int)
     _resolve(cfg, "density",  "physical_gpu",    "DENSITY_PHYSICAL_GPU",    cast=int)
+    _resolve(cfg, "density",  "frame_interval",  "DENSITY_EVERY_N_FRAMES", cast=int)
 
     # --- Perf-tuned escape hatches (env overrides YAML; no built-in default
     #     because YAML is the canonical source for these) -------------------
@@ -106,6 +108,10 @@ def _apply_env_overrides(cfg: dict[str, Any]) -> dict[str, Any]:
         cfg.setdefault("yolo", {})["start_gpu_id"] = int(v)
     if v := os.environ.get("DENSITY_ENABLED"):
         cfg.setdefault("density", {})["enabled"] = v.lower() in ("1", "true", "yes")
+    if v := os.environ.get("SHMEM_SLOTS_PER_STREAM"):
+        cfg.setdefault("shmem", {})["slots_per_stream"] = int(v)
+    if v := os.environ.get("PAIRED_OUTPUT_FPS"):
+        cfg.setdefault("output", {})["fps"] = int(v)
     return cfg
 
 

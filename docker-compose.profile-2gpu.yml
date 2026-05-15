@@ -1,0 +1,27 @@
+# Created by Metrum AI for AMD
+
+# Explicit 2-GPU runtime profile.
+# GPU 0: YOLO pipeline workers (2 replicas)
+# GPU 1: DM-Count density + Lemonade LLM
+services:
+  pipeline:
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    environment:
+      ROCR_VISIBLE_DEVICES: "0,1"
+      HSA_VISIBLE_DEVICES: "0,1"
+      GPU_COUNT: "1"
+      YOLO_START_GPU: "0"
+      YOLO_REPLICAS_PER_GPU: "2"
+      DENSITY_PHYSICAL_GPU: "1"
+      STREAM_COUNT: "${STREAM_COUNT:-25}"
+      DENSITY_DISPLAY_STREAMS: "${DENSITY_DISPLAY_STREAMS:-${STREAM_COUNT:-25}}"
+      ENCODE_MODE: "${ENCODE_MODE:-software}"
+  lemonade:
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    environment:
+      ROCR_VISIBLE_DEVICES: "1"
+      HSA_VISIBLE_DEVICES: "1"

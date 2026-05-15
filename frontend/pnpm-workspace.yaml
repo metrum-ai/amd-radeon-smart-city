@@ -1,0 +1,15 @@
+# Created by Metrum AI for AMD
+
+packages:
+  - .
+
+# pnpm 10/11 blocks dependency lifecycle scripts unless they are explicitly
+# approved. esbuild's postinstall is required to install the native binary used
+# by Vite during the frontend build, so approve only that package.
+allowBuilds:
+  esbuild: true
+
+# Compatibility for pnpm 10 versions that still use the previous allow-list
+# setting name.
+onlyBuiltDependencies:
+  - esbuild

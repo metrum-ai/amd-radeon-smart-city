@@ -86,11 +86,16 @@ def _load_location_index() -> Dict[str, dict]:
     global _location_cache  # pylint: disable=global-statement
     if _location_cache is not None:
         return _location_cache
+    from smart_city.core.stream_allocation import (  # noqa: PLC0415
+        apply_city_allocation,
+    )
+
     try:
         with open(_STREAMS_METADATA_FILE, encoding="utf-8") as fh:
             raw = yaml.safe_load(fh) or {}
         streams = raw.get("streams", raw) if isinstance(raw, dict) else raw
         if isinstance(streams, list):
+            streams = apply_city_allocation(list(streams))
             idx: Dict[str, dict] = {}
             for s in streams:
                 meta = {

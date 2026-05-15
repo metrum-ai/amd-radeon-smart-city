@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import subprocess
 import threading
@@ -17,20 +18,35 @@ logger = logging.getLogger(__name__)
 _vaapi_encode_available: Optional[bool] = None
 _vaapi_lock = threading.Lock()
 
+# Default render node for VA-API encode. Override with VAAPI_ENCODE_DEVICE env
+# var when routing encode to a non-default GPU (e.g. when YOLO occupies GPU 0
+# and you want encode to land on GPU 1's VCN engine).
+DEFAULT_VAAPI_ENCODE_DEVICE = "/dev/dri/renderD128"
 
-def _probe_vaapi_encode() -> bool:
-    """Run a single-frame test encode to verify h264_vaapi is functional."""
+
+def _vaapi_device_path() -> str:
+    return os.environ.get("VAAPI_ENCODE_DEVICE", DEFAULT_VAAPI_ENCODE_DEVICE)
+
+
+def _probe_vaapi_encode(device: Optional[str] = None) -> bool:
+    """Run a single-frame test encode to verify h264_vaapi is functional.
+
+    Uses 256x256 (above the 96x32 minimum supported by AMD VCN H.264) so the
+    probe succeeds when the codec is actually usable. The previous 64x64 probe
+    failed even on a working device because 64x64 is below VCN's min width.
+    """
     global _vaapi_encode_available
     with _vaapi_lock:
         if _vaapi_encode_available is not None:
             return _vaapi_encode_available
+        dev = device or _vaapi_device_path()
         try:
             result = subprocess.run(
                 [
                     "ffmpeg", "-hide_banner", "-loglevel", "error",
-                    "-f", "lavfi", "-i", "nullsrc=s=64x64:r=1",
+                    "-f", "lavfi", "-i", "nullsrc=s=256x256:r=1",
                     "-frames:v", "1",
-                    "-vaapi_device", "/dev/dri/renderD128",
+                    "-vaapi_device", dev,
                     "-vf", "format=nv12,hwupload",
                     "-c:v", "h264_vaapi",
                     "-f", "null", "-",
@@ -41,7 +57,11 @@ def _probe_vaapi_encode() -> bool:
             _vaapi_encode_available = result.returncode == 0
         except Exception:
             _vaapi_encode_available = False
-        logger.info("VAAPI encode probe: %s", "ok" if _vaapi_encode_available else "unavailable")
+        logger.info(
+            "VAAPI encode probe (%s): %s",
+            dev,
+            "ok" if _vaapi_encode_available else "unavailable",
+        )
         return _vaapi_encode_available  # type: ignore[return-value]
 
 
@@ -77,7 +97,7 @@ def _build_ffmpeg_cmd(
 
     if use_hw:
         enc = [
-            "-vaapi_device", "/dev/dri/renderD128",
+            "-vaapi_device", _vaapi_device_path(),
             "-vf", "format=nv12,hwupload",
             "-c:v", "h264_vaapi",
             "-profile:v", "constrained_baseline",

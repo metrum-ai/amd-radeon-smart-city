@@ -51,6 +51,9 @@ def _build_default_zones() -> list:
         RuntimeError: If streams_metadata.yaml cannot be loaded.
     """
     import yaml as _yaml  # noqa: PLC0415
+    from smart_city.core.stream_allocation import (  # noqa: PLC0415
+        apply_city_allocation,
+    )
 
     _meta_path = os.path.normpath(os.path.join(
         os.path.dirname(__file__), "..", "config", "streams_metadata.yaml"
@@ -58,7 +61,7 @@ def _build_default_zones() -> list:
     with open(_meta_path, encoding="utf-8") as _f:
         _cfg = _yaml.safe_load(_f)
     zones = []
-    for s in _cfg.get("streams", []):
+    for s in apply_city_allocation(list(_cfg.get("streams", []))):
         sid = int(s["id"])
         zone_id = s.get("zone_id") or f"cam{sid}_main"
         loc = s.get("location_name", f"Camera {sid}")
@@ -110,7 +113,17 @@ def _load_streams_metadata(config_path: str) -> dict[int, dict]:
 
     Returns a dict keyed by stream id (int).  Falls back to empty dict if the
     file is missing (e.g. during development without the full repo layout).
+
+    The ``city`` value of each entry is rewritten via
+    :func:`smart_city.core.stream_allocation.apply_city_allocation` so the
+    first ``STREAM_COUNT`` streams are distributed across the metadata's
+    unique cities instead of all landing in whichever city happens to be
+    listed first.
     """
+    from smart_city.core.stream_allocation import (  # noqa: PLC0415
+        apply_city_allocation,
+    )
+
     path = Path(config_path)
     if not path.exists():
         logger.warning("streams_metadata.yaml not found at %s — using empty metadata", path)
@@ -118,7 +131,8 @@ def _load_streams_metadata(config_path: str) -> dict[int, dict]:
     try:
         with open(path) as f:
             data = yaml.safe_load(f) or {}
-        return {int(s["id"]): s for s in data.get("streams", [])}
+        streams = apply_city_allocation(list(data.get("streams", [])))
+        return {int(s["id"]): s for s in streams}
     except (OSError, yaml.YAMLError, ValueError, KeyError, TypeError) as exc:
         logger.error(
             "Failed to load streams_metadata.yaml: %s", exc, exc_info=True
@@ -144,6 +158,38 @@ def _read_pipeline_stats(stats_file: str) -> dict[int, dict]:
             "pipeline_stats read error: %s", exc, exc_info=True
         )
         return {}
+
+
+def _resolve_stream_cfg(sid: int, meta: dict[int, dict]) -> dict:
+    """Return metadata for *sid*, generating synthetic values for unknown streams.
+
+    When *sid* is not present in *meta* (i.e. STREAM_COUNT exceeds the number
+    of entries in streams_metadata.yaml), a template is selected by cycling
+    through the known entries.  Only non-geographic fields are reused from the
+    template; ``location_name``, ``zone_id``, ``lat``, and ``lon`` are made
+    unique so map markers and reports stay distinct.
+
+    Args:
+        sid: 1-based stream ID.
+        meta: Mapping of stream IDs to their metadata dicts.
+
+    Returns:
+        Metadata dict for *sid* (real or synthesised).
+    """
+    if sid in meta:
+        return meta[sid]
+    if not meta:
+        return {}
+    template_id = ((sid - 1) % len(meta)) + 1
+    template = dict(meta[template_id])
+    offset = (sid - template_id) * 0.002
+    template["location_name"] = (
+        f"Camera {sid} \u2013 {template.get('city', 'Unknown')}"
+    )
+    template["zone_id"] = f"cam{sid}_main"
+    template["lat"] = float(template.get("lat", 0.0)) + offset
+    template["lon"] = float(template.get("lon", 0.0)) + offset
+    return template
 
 
 async def _realtime_push_loop(app: FastAPI) -> None:
@@ -222,7 +268,7 @@ async def _realtime_push_loop(app: FastAPI) -> None:
                     # Pipeline uses 0-indexed stream IDs internally; metadata config
                     # uses 1-indexed IDs (cam1..cam50). Map 0→1, 1→2, …, 49→50.
                     sid = stream_id_int + 1
-                    cfg = stream_meta_cfg.get(sid, {})
+                    cfg = _resolve_stream_cfg(sid, stream_meta_cfg)
                     location_name = cfg.get("location_name", f"Camera {sid}")
                     lat = float(cfg.get("lat", 30.2672))
                     lon = float(cfg.get("lon", -97.7431))
@@ -358,7 +404,8 @@ async def _realtime_push_loop(app: FastAPI) -> None:
                 # ----------------------------------------------------------------
                 # FALLBACK / SIMULATOR MODE — synthetic data until pipeline starts
                 # ----------------------------------------------------------------
-                for zone in fallback_zones:
+                _active_count = int(os.environ.get("STREAM_COUNT", len(fallback_zones)))
+                for zone in fallback_zones[:_active_count]:
                     count = _crowd_count(now, zone, rng)
                     density = _density_score(count, zone.peak_capacity)
                     severity = "CRITICAL" if count >= zone.threshold_critical else "SAFE"

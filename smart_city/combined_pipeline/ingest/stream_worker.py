@@ -19,13 +19,34 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from combined_pipeline.ingest.rtsp_source import RtspSource, pick_decoder
+from combined_pipeline.inference.density_server_onnx import _roi_crop as density_roi_crop
 from combined_pipeline.inference.onnx_yolo import frame_to_infer_plane
 from combined_pipeline.ipc.frame_store import attach_frame_store, global_slot
 from combined_pipeline.ipc.messages import InferJob, InferResult, payload_to_result
 from combined_pipeline.output.rtsp_publisher import RtspPublisher
-from combined_pipeline.overlay.renderer import draw_detections, make_density_frame
+from combined_pipeline.overlay.renderer import (
+    blend_heatmap_over_frame,
+    compute_density_heatmap_rgb,
+    draw_detections,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def should_submit_density_frame(seq: int, cadence: int) -> bool:
+    """Return whether this frame should be sent to density inference."""
+    return seq % max(1, cadence) == 0
+
+
+def should_publish_output_frame(
+    now: float,
+    last_publish_at: float | None,
+    fps: int,
+) -> bool:
+    """Return whether enough time has elapsed to publish another output frame."""
+    if fps <= 0 or last_publish_at is None:
+        return True
+    return now - last_publish_at >= 1.0 / fps
 
 
 def run_stream_worker(
@@ -55,6 +76,9 @@ def run_stream_worker(
     # Density path - both None for YOLO-only streams
     density_in_queue: Optional[Queue],
     density_out_queue: Optional[Queue],
+    density_frame_interval: int = 1,
+    density_infer_w: int = 0,
+    density_infer_h: int = 0,
     use_hw_encode: bool = False,
     vaapi_device: Optional[str] = None,
     hw_decode_stagger_ms: int = 0,
@@ -123,6 +147,7 @@ def run_stream_worker(
     _latest_latency_ms: float = 0.0
     _stats_update_interval = 60  # frames between shared_stats updates
     _stats_frame_count = 0
+    _last_output_publish_at: float | None = None
 
     # Seq-keyed buffer: map seq → (density_map, raw_count).
     # Bounded to 16 entries — older unmatched results are evicted to avoid
@@ -136,6 +161,16 @@ def run_stream_worker(
     latest_density_map: np.ndarray | None = None
     latest_density_count: float = 0.0    # EMA-smoothed, for display
     _density_raw_count: float = 0.0      # raw DM-Count sum, kept for debug
+
+    # Cache of the last computed heatmap RGB panel and the density_map array it
+    # was built from. Density typically updates ~3-5× slower than YOLO at 50
+    # streams, so caching the upscaled+colormapped panel saves the expensive
+    # per-frame normalise/gamma/blur/resize/applyColorMap work and keeps just
+    # the cv2.addWeighted blend on the per-frame hot path. Storing the ndarray
+    # reference (not just id()) keeps it alive — avoids id() reuse after GC
+    # accidentally returning a stale cached panel.
+    _cached_heatmap_rgb: np.ndarray | None = None
+    _cached_heatmap_source: np.ndarray | None = None
 
     def _poll_density() -> None:
         """Drain the density output queue into the seq-keyed buffer."""
@@ -162,6 +197,8 @@ def run_stream_worker(
         nonlocal _lat_frame_count, in_flight
         nonlocal _latest_count, _latest_latency_ms, _stats_frame_count
         nonlocal latest_density_map, latest_density_count, _density_raw_count
+        nonlocal _cached_heatmap_rgb, _cached_heatmap_source
+        nonlocal _last_output_publish_at
 
         while expected_seq in pending:
             r = pending.pop(expected_seq)
@@ -244,6 +281,13 @@ def run_stream_worker(
                         "status": "LIVE",
                     }
 
+            now = time.monotonic()
+            if not should_publish_output_frame(
+                now, _last_output_publish_at, output_fps,
+            ):
+                continue
+            _last_output_publish_at = now
+
             raw_frame = store.full_view(r.full_slot)
 
             # --- YOLO output frame ---
@@ -253,9 +297,24 @@ def run_stream_worker(
 
             if is_density_stream and latest_density_map is not None:
                 # Density streams with density data: publish paired (YOLO | Density)
-                density_frame = make_density_frame(
-                    raw_frame, latest_density_map, latest_density_count,
-                    alpha=0.55,
+                # Recompute the heatmap RGB panel only when latest_density_map
+                # actually changed (`is` identity check; we keep a reference to
+                # the source array so its id() can't be reused by GC). Otherwise
+                # the cached panel is still valid and the per-frame hot path is
+                # just frame.copy() + addWeighted in blend_heatmap_over_frame.
+                if (
+                    _cached_heatmap_rgb is None
+                    or _cached_heatmap_source is not latest_density_map
+                    or _cached_heatmap_rgb.shape[:2] != raw_frame.shape[:2]
+                ):
+                    _cached_heatmap_rgb = compute_density_heatmap_rgb(
+                        latest_density_map,
+                        raw_frame.shape[0],
+                        raw_frame.shape[1],
+                    )
+                    _cached_heatmap_source = latest_density_map
+                density_frame = blend_heatmap_over_frame(
+                    raw_frame, _cached_heatmap_rgb, alpha=0.55,
                 )
                 paired_frame = np.hstack([yolo_frame, density_frame])
 
@@ -301,16 +360,29 @@ def run_stream_worker(
                     yolo_publisher.write(yolo_frame)
 
     def _drain_results() -> None:
-        """Non-blocking drain of result_queue; flush any in-order pending results."""
+        """Non-blocking drain of result_queue; flush any in-order pending results.
+
+        Drain ALL queued payloads into `pending` first, then poll density once
+        and call flush_pending once. The previous version called flush_pending
+        after every single get_nowait, which interleaved the heavy publish work
+        (cv2 ops + np.hstack + ffmpeg pipe write) between drain steps and
+        forced the worker to publish-one, drain-one, publish-one, ... — a
+        latency win at the cost of throughput. Batching the drain lets the
+        worker pull the entire backlog in microseconds, then do one publish
+        pass for all in-order frames.
+        """
+        drained = False
         try:
             while True:
                 pay = result_queue.get_nowait()
                 r = payload_to_result(pay)
                 pending[r.seq] = r
-                _poll_density()
-                flush_pending()
+                drained = True
         except queue.Empty:
             pass
+        if drained:
+            _poll_density()
+            flush_pending()
 
     def _wait_for_slot() -> None:
         """Block on the result queue until in_flight drops below slots_per_stream.
@@ -324,12 +396,19 @@ def run_stream_worker(
                 pay = result_queue.get(timeout=0.05)
                 r = payload_to_result(pay)
                 pending[r.seq] = r
-                _poll_density()
-                flush_pending()  # decrements in_flight via the integer path
+            except queue.Empty:
+                continue
+            # Drain any additional results that arrived during the blocking get,
+            # then poll density and publish in one shot (see _drain_results).
+            try:
+                while True:
+                    pay = result_queue.get_nowait()
+                    r = payload_to_result(pay)
+                    pending[r.seq] = r
             except queue.Empty:
                 pass
-            # Drain any additional results that arrived during the blocking get
-            _drain_results()
+            _poll_density()
+            flush_pending()
 
     try:
         while not stop_event.is_set():
@@ -367,9 +446,22 @@ def run_stream_worker(
             )
             job_queue.put(job)
 
-            if is_density_stream:
+            if is_density_stream and should_submit_density_frame(
+                seq, density_frame_interval
+            ):
+                # Pre-crop+resize to the density inference size in the worker so the
+                # queue payload drops from 640x640x3 (~1.2 MB) to 160x120x3 (~58 kB)
+                # — that's a 21× reduction in per-frame pickle/copy cost across
+                # 50 streams, and it eliminates the per-frame full-frame.copy().
+                # When density_infer_{w,h} are 0 (legacy callers), fall back to
+                # shipping the full frame so the server can still crop+resize.
+                if density_infer_w > 0 and density_infer_h > 0:
+                    tile = density_roi_crop(frame, density_infer_w, density_infer_h)
+                    payload = np.ascontiguousarray(tile)
+                else:
+                    payload = frame.copy()
                 try:
-                    density_in_queue.put_nowait((stream_id, frame.copy(), seq))  # type: ignore[union-attr]
+                    density_in_queue.put_nowait((stream_id, payload, seq))  # type: ignore[union-attr]
                 except queue.Full:
                     pass
 

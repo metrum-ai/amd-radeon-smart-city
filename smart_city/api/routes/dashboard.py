@@ -98,6 +98,10 @@ def _tooltip_cfg() -> dict[str, Any]:
 @lru_cache(maxsize=1)
 def _load_stream_city_index() -> tuple[dict[str, str], dict[str, str]]:
     """Load zone->city and location->city mappings from stream metadata."""
+    from smart_city.core.stream_allocation import (  # noqa: PLC0415
+        apply_city_allocation,
+    )
+
     cfg_path = (
         Path(__file__).resolve().parents[2]
         / "config"
@@ -109,7 +113,7 @@ def _load_stream_city_index() -> tuple[dict[str, str], dict[str, str]]:
         return zone_to_city, location_to_city
     with cfg_path.open("r", encoding="utf-8") as fh:
         loaded = yaml.safe_load(fh) or {}
-    for stream in loaded.get("streams", []):
+    for stream in apply_city_allocation(list(loaded.get("streams", []))):
         city = str(stream.get("city", "")).strip()
         zone_id = str(stream.get("zone_id", "")).strip()
         if not zone_id:
@@ -132,7 +136,11 @@ def _camera_matches_city(data: dict, city: str) -> bool:
         if zone_id and zone_to_city.get(zone_id) == city:
             return True
     location_name = str(data.get("location_name", "")).strip()
-    return location_to_city.get(location_name) == city
+    if location_to_city.get(location_name) == city:
+        return True
+    # Fallback for synthesised streams (beyond YAML pool size): city is
+    # stored directly on the density_cache entry by _resolve_stream_cfg.
+    return str(data.get("city", "")).strip() == city
 
 
 @router.get("/dashboard/map", response_model=MapDataResponse)
@@ -336,12 +344,17 @@ def _load_streams_metadata() -> dict[str, list[dict]]:
         Dict mapping city_id (e.g. ``austin_downtown``) to an ordered list
         of ``{zone_id, label}`` dicts loaded from streams_metadata.yaml.
     """
+    from smart_city.core.stream_allocation import (  # noqa: PLC0415
+        apply_city_allocation,
+    )
+
     try:
         with open(_STREAMS_META_FILE, encoding="utf-8") as fh:
             raw = yaml.safe_load(fh) or {}
         streams = raw.get("streams", raw) if isinstance(raw, dict) else raw
         if not isinstance(streams, list):
             return {}
+        streams = apply_city_allocation(list(streams))
         grouped: dict[str, list[dict]] = {}
         seen: set[str] = set()
         for s in streams:
@@ -372,9 +385,14 @@ def _load_streams_metadata() -> dict[str, list[dict]]:
 
 @router.get("/dashboard/locations")
 async def get_locations_by_city(
+    request: Request,
     city_id: Optional[str] = None,
 ) -> dict:
     """Return stream locations grouped by city_id from streams_metadata.yaml.
+
+    Also includes synthesised streams (beyond the YAML pool size) from the
+    live density_cache so the location dropdown stays complete when
+    STREAM_COUNT exceeds the number of YAML entries.
 
     Args:
         city_id: Optional filter, e.g. ``austin_downtown``.  Returns all
@@ -383,7 +401,26 @@ async def get_locations_by_city(
     Returns:
         Dict mapping city_id to list of ``{zone_id, label}`` objects.
     """
-    data = _load_streams_metadata()
+    # Deep-copy so we can append without corrupting the lru_cache result.
+    base = _load_streams_metadata()
+    data: dict[str, list[dict]] = {k: list(v) for k, v in base.items()}
+
+    # Augment with synthesised streams from the live cache.
+    cache: dict = getattr(request.app.state, "density_cache", {})
+    for sid, stream_data in sorted(cache.items()):
+        city_label = str(stream_data.get("city", "")).strip()
+        cid = _CITY_ID_MAP.get(city_label, "")
+        if not cid:
+            continue
+        zone_id = str(stream_data.get("zone_id", "")).strip() or f"cam{sid}_main"
+        # Skip if already present from YAML.
+        if any(e["zone_id"] == zone_id for e in data.get(cid, [])):
+            continue
+        data.setdefault(cid, []).append({
+            "zone_id": zone_id,
+            "label": str(stream_data.get("location_name", zone_id)).strip(),
+        })
+
     if city_id:
         return {city_id: data.get(city_id, [])}
     return data

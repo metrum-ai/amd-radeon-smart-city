@@ -55,6 +55,12 @@ def _roi_crop(
         HWC uint8 array of shape (infer_h, infer_w, 3).
     """
     h, w = frame.shape[:2]
+    if (w, h) == (infer_w, infer_h):
+        # Frame is already at the target inference size — skip crop+resize.
+        # This is the fast path used when stream workers pre-crop tiles before
+        # enqueueing them to drop the per-frame full-frame.copy() and 1.2 MB
+        # pickle payload for every density-eligible frame.
+        return frame
     target_ar = infer_w / infer_h
     src_ar = w / h
     if src_ar > target_ar:
@@ -77,7 +83,12 @@ def _preprocess_batch(
     batch_size: int,
     dtype: np.dtype,
 ) -> np.ndarray:
-    """ROI-crop, ImageNet-normalise, pad to fixed batch → NCHW float."""
+    """ROI-crop, ImageNet-normalise, pad to fixed batch → NCHW float.
+
+    Frames already shaped (infer_h, infer_w, 3) skip the cv2 crop+resize via
+    the fast path in `_roi_crop`. The per-batch normalise is then a single
+    vectorised op against the pre-allocated batch buffer.
+    """
     batch = np.zeros((batch_size, 3, infer_h, infer_w), dtype=np.float32)
     for i, frame in enumerate(frames):
         if i >= batch_size:

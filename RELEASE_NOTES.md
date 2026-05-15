@@ -1,6 +1,16 @@
 <!-- Created by Metrum AI for AMD -->
 # Release Notes
 
+## v1.1
+
+### Features
+
+* **Enhanced Multi-GPU Deployment and Profiling Support:** Simplified deployment workflows for both 2-GPU and 4-GPU configurations, along with integrated support for profiling workflows.
+
+* **Ubuntu 24.04 Support**: Updated setup and runtime compatibility for Ubuntu 24.04 environments.
+
+---
+
 ## v1.0
 
 ### Features

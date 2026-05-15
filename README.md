@@ -2,9 +2,9 @@
 
 **On‑Premise GenAI Solution for Real‑Time Crowd Intelligence and Incident Reporting**
 
-*Built for city operations centers on AMD Radeon AI PRO R9700S accelerators with the AMD ROCm 7.2 stack.*
+*Built for city operations centers on 2‑GPU and 4‑GPU AMD Radeon AI PRO R9700S reference deployments with the AMD ROCm 7.2 stack.*
 
-![Live Operations Dashboard](assets/live-operations-view.png)
+![Live Operations Dashboard](assets/dashboard-4gpus.png)
 
 ---
 
@@ -36,7 +36,7 @@ This solution delivers a **unified, on‑premise crowd intelligence system** tha
 
 | Feature                                | Description                                                                                                                                              |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **GPU‑Accelerated Video Intelligence** | 50 RTSP streams with YOLOv26 + DM‑Count on 2× AMD Radeon R9700S (ROCm + MIGraphX). Sub‑100 ms P95 latency from video → detection → alert → dashboard     |
+| **GPU‑Accelerated Video Intelligence** | 50 RTSP streams with YOLOv26 + DM‑Count on 2× or 4× AMD Radeon R9700S (ROCm + MIGraphX). Sub‑100 ms P95 latency from video → detection → alert → dashboard |
 | **GAIA Agentic Intelligence**          | AMD GAIA framework orchestrates Investigator (TimescaleDB) + SOP Advisor (Milvus RAG) for context‑aware incident analysis with policy‑grounded summaries |
 | **Real‑Time Alerting System**          | Automatic alerts on threshold breach with zero delay; live‑stream auto‑popups with heatmaps — no operator intervention needed                            |
 | **On‑Prem ROCm‑Optimized LLM Serving** | `Qwen3-30B-A3B-GGUF` via Lemonade Server for local report generation, retrieving policy + history for grounded, auditable outputs                        |
@@ -54,7 +54,7 @@ This solution was deployed and tested on the following hardware:
 | Component      | Specification                                         |
 | -------------- | ----------------------------------------------------- |
 | **CPU**        | AMD EPYC / Ryzen Threadripper PRO, 96 cores          |
-| **GPU**        | 2× AMD Radeon AI PRO R9700S (32 GB HBM each, gfx1201) |
+| **GPU**        | 2× or 4× AMD Radeon AI PRO R9700S (32 GB HBM each, gfx1201) |
 | **System RAM** | 256 GB DDR5                                           |
 | **Storage**    | 2 TB NVMe SSD                                         |
 
@@ -62,7 +62,7 @@ This solution was deployed and tested on the following hardware:
 
 | Component            | Version                  |
 | -------------------- | ------------------------ |
-| **Operating System** | Ubuntu 22.04 LTS (Jammy) |
+| **Operating System** | Ubuntu 22.04 LTS or 24.04 LTS |
 | **Docker Engine**    | 24.0+                    |
 | **Docker Compose**   | v2.20+                   |
 | **ROCm**             | 7.2.0                    |
@@ -114,7 +114,7 @@ sudo chown -R $USER:$USER /opt/smartcity/lemonade
 
 ### 5. Start the stack
 
-The recommended path is the guided `setup.sh` script — it writes and updates `.env` (including all required secrets such as `HF_TOKEN` and `POSTGRES_PASSWORD`), copies demo videos into `videos/`, downloads the LLM model weights, pins the GPU layout (YOLO → GPU 0; DM‑Count + Lemonade → GPU 1), exports the YOLO ONNX, and builds and starts everything:
+The recommended path is the guided `setup.sh` script — it writes and updates `.env` (including all required secrets such as `HF_TOKEN` and `POSTGRES_PASSWORD`), copies demo videos into `videos/`, downloads the LLM model weights, selects the appropriate 2‑GPU or 4‑GPU profile, exports the YOLO ONNX, and builds and starts everything:
 
 ```bash
 ./setup.sh
@@ -201,7 +201,7 @@ The entire experience lives behind a single URL — [http://localhost:5173](http
 ### 1. Landing page
 
 <div align="center">
-  <img src="assets/tooltip-view.png" alt="Live Operations View" width="900"/>
+  <img src="assets/dashboard-4gpus.png" alt="Live Operations View" width="900"/>
   <p><em>Live Operations View</em></p>
 </div>
 
@@ -217,7 +217,7 @@ Once the dashboard opens you can:
 ### 2. Auto‑Popup on Critical Alert
 
 <div align="center">
-  <img src="assets/live-operations-view.png" alt="Live Alerts" width="900"/>
+  <img src="assets/dashboard-4gpus.png" alt="Live Alerts" width="900"/>
   <p><em>Threshold breach instantly surfaces the live feed with a heatmap overlay</em></p>
 </div>
 
@@ -228,7 +228,7 @@ When any zone breaches its CRITICAL threshold the corresponding stream auto‑su
 ### 3. Analytics Page
 
 <div align="center">
-  <img src="assets/analytics-view.png" alt="Analytics View" width="900"/>
+  <img src="assets/analytics without report 4gpus.png" alt="Analytics View" width="900"/>
   <p><em>Analytics dashboard view</em></p>
 </div>
 
@@ -245,7 +245,7 @@ Open the **Analytics** page from the top navigation to see the rolling **30‑da
 Select a zone for the selected city and the time duration for the incident report and click **Generate Report**. The Orchestrator Agent invokes the Investigator (TimescaleDB evidence) and the SOP Advisor (policy excerpts from Milvus); Lemonade synthesizes a structured Markdown report and WeasyPrint renders the PDF you can download.
 
 <div align="center">
-  <img src="assets/ai-incident-report-generation.png" alt="AI incident summary" width="900"/>
+  <img src="assets/analytics with report-4gpus.png" alt="AI incident summary" width="900"/>
   <p><em>AI incident summary</em></p>
 </div>
 
@@ -296,9 +296,9 @@ Full reference of every variable understood by the stack:
 | Variable                      | Default                                                         | Required | Description                                                            |
 | ----------------------------- | --------------------------------------------------------------- | -------- | ---------------------------------------------------------------------- |
 | `POSTGRES_USER`               | `smartcity`                                                     | Yes      | TimescaleDB username                                                   |
-| `POSTGRES_PASSWORD`           | `changeme`                                                      | Yes      | TimescaleDB password — change before any non‑sandbox deployment        |
+| `POSTGRES_PASSWORD`           | generated by setup                                              | Yes      | TimescaleDB password                                                   |
 | `POSTGRES_DB`                 | `smartcity_db`                                                  | Yes      | TimescaleDB database name                                              |
-| `DATABASE_URL`                | `postgresql://smartcity:changeme@timescaledb:5432/smartcity_db` | Yes      | Full TimescaleDB connection string used by the API                     |
+| `DATABASE_URL`                | set in `.env`                                                   | Yes      | Full TimescaleDB connection string used by the API                     |
 | `MILVUS_HOST` / `MILVUS_PORT` | `milvus` / `19530`                                              | Yes      | Vector DB host and port                                                |
 | `EMBED_BASE_URL`              | `http://vllm-embed:8000`                                        | No       | TEI embeddings endpoint (leave empty to disable RAG)                   |
 | `EMBED_MODEL`                 | `BAAI/bge-small-en-v1.5`                                        | No       | HuggingFace model id served by the TEI embedding container             |
@@ -310,12 +310,12 @@ Full reference of every variable understood by the stack:
 | `LEMONADE_LLAMACPP_BACKEND`   | `rocm`                                                          | Yes      | Lemonade llama.cpp backend (use `rocm` for AMD GPUs)                   |
 | `LLM_API_KEY`                 | *empty*                                                         | No       | Required only when `VLLM_BASE_URL` points at OpenRouter                |
 | `HF_TOKEN`                    | *empty*                                                         | Yes      | HuggingFace token used to download gated weights / Lemonade cache      |
-| `ROCR_VISIBLE_DEVICES`        | `0,1`                                                           | Yes      | ROCm device mask exposed to the analytics pipeline                     |
+| `ROCR_VISIBLE_DEVICES`        | `0,1` or `0,1,2,3`                                              | Yes      | ROCm device mask for the selected GPU profile                          |
 | `HSA_OVERRIDE_GFX_VERSION`    | `12.0.1`                                                        | Yes      | Required for `gfx1201` (Radeon AI PRO R9700S)                          |
-| `YOLO_GPU_ID`                 | `0`                                                             | Yes      | GPU index dedicated to YOLOv26 inside the pipeline container           |
-| `DMCOUNT_GPU_ID`              | `1`                                                             | Yes      | GPU index dedicated to DM‑Count inside the pipeline container          |
-| `LEMONADE_GPU_ID`             | `1`                                                             | Yes      | GPU index dedicated to the Lemonade LLM container                      |
-| `NUM_GPUS`                    | `2`                                                             | Yes      | Number of physical AMD GPUs available to the pipeline                  |
+| `YOLO_GPU_ID`                 | profile default                                                 | Yes      | GPU index assigned to YOLOv26 inside the pipeline container            |
+| `DMCOUNT_GPU_ID`              | profile default                                                 | Yes      | GPU index assigned to DM‑Count inside the pipeline container           |
+| `LEMONADE_GPU_ID`             | profile default                                                 | Yes      | GPU index assigned to the Lemonade LLM container                       |
+| `NUM_GPUS`                    | `2` or `4`                                                      | Yes      | Active supported GPU profile                                           |
 | `STREAM_COUNT`                | `50`                                                            | Yes      | Concurrent RTSP streams (demo default)                                 |
 | `DENSITY_DISPLAY_STREAMS`     | `50`                                                            | Yes       | How many streams render a DM-Count heatmap overlay (capped at `STREAM_COUNT`) |
 | `PIPELINE_STATS_FILE`         | `/pipeline_stats/pipeline_stats.json`                           | No       | Pipeline stats path (shared Docker volume — do not change)             |

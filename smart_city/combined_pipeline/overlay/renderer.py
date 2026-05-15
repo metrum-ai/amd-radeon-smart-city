@@ -121,29 +121,16 @@ def draw_detections(
         )
 
 
-def make_density_frame(
-    frame_rgb: np.ndarray,
-    density_map: np.ndarray,
-    count: float,
-    alpha: float = 0.55,
-    norm_max: float | None = None,
+def compute_density_heatmap_rgb(
+    density_map: np.ndarray, out_h: int, out_w: int
 ) -> np.ndarray:
-    """Return a NEW frame with the DM-Count heatmap blended over a copy of frame_rgb.
+    """Build the HWC uint8 RGB heatmap for a density map at the requested size.
 
-    Uses a stronger alpha (0.55) so the heatmap is clearly visible as a separate view.
-
-    Args:
-        frame_rgb: HWC uint8 RGB source frame.
-        density_map: 2-D float32 density output from DM-Count.
-        count: Smoothed scalar crowd count for the label.
-        alpha: Heatmap blend weight.
-        norm_max: Unused; kept for call-site compatibility.
-
-    Returns:
-        New HWC uint8 RGB frame with heatmap overlay and crowd label.
+    Split out from make_density_frame so the expensive normalise→gamma→blur→
+    resize→colormap pipeline can be cached per-stream and reused across the
+    several YOLO frames that share the same density_map (DM-Count typically
+    runs 3-5× slower than YOLO at 50 streams).
     """
-    h, w = frame_rgb.shape[:2]
-
     dm = np.maximum(density_map, 0).astype(np.float32)
 
     # Percentile normalisation: scale by the 99th percentile of non-zero values
@@ -169,19 +156,52 @@ def make_density_frame(
     dm = cv2.GaussianBlur(dm, (0, 0), sigmaX=1.2)
 
     # Upsample with INTER_CUBIC for smoother spatial field reconstruction.
-    dm_resized = cv2.resize(dm, (w, h), interpolation=cv2.INTER_CUBIC)
+    dm_resized = cv2.resize(dm, (out_w, out_h), interpolation=cv2.INTER_CUBIC)
     dm_resized = dm_resized.clip(0.0, 1.0)
 
     # COLORMAP_JET: blue→cyan→green→yellow→red for the thermal surveillance look.
     dm_uint8 = (dm_resized * 255).astype(np.uint8)
     heatmap_bgr = cv2.applyColorMap(dm_uint8, cv2.COLORMAP_JET)
-    heatmap_rgb = heatmap_bgr[:, :, ::-1]
+    return np.ascontiguousarray(heatmap_bgr[:, :, ::-1])
 
-    # Blend onto a copy of the original frame
+
+def blend_heatmap_over_frame(
+    frame_rgb: np.ndarray,
+    heatmap_rgb: np.ndarray,
+    alpha: float,
+) -> np.ndarray:
+    """Blend a precomputed heatmap_rgb panel over a copy of frame_rgb."""
     out = frame_rgb.copy()
     cv2.addWeighted(out, 1.0 - alpha, heatmap_rgb, alpha, 0, dst=out)
-
     return out
+
+
+def make_density_frame(
+    frame_rgb: np.ndarray,
+    density_map: np.ndarray,
+    count: float,
+    alpha: float = 0.55,
+    norm_max: float | None = None,
+) -> np.ndarray:
+    """Return a NEW frame with the DM-Count heatmap blended over a copy of frame_rgb.
+
+    Uses a stronger alpha (0.55) so the heatmap is clearly visible as a separate view.
+    Thin wrapper around the split helpers; kept for backward compatibility with
+    callers that don't want to manage a per-stream heatmap cache themselves.
+
+    Args:
+        frame_rgb: HWC uint8 RGB source frame.
+        density_map: 2-D float32 density output from DM-Count.
+        count: Smoothed scalar crowd count for the label.
+        alpha: Heatmap blend weight.
+        norm_max: Unused; kept for call-site compatibility.
+
+    Returns:
+        New HWC uint8 RGB frame with heatmap overlay and crowd label.
+    """
+    h, w = frame_rgb.shape[:2]
+    heatmap_rgb = compute_density_heatmap_rgb(density_map, h, w)
+    return blend_heatmap_over_frame(frame_rgb, heatmap_rgb, alpha)
 
 
 def blend_density_heatmap(

@@ -1,0 +1,32 @@
+# Created by Metrum AI for AMD
+
+# Explicit 4-GPU high-YOLO-FPS runtime profile.
+# GPU 0: DM-Count density
+# GPU 1-2: YOLO pipeline workers (2 replicas per GPU)
+# GPU 3: Lemonade LLM
+services:
+  pipeline:
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    environment:
+      ROCR_VISIBLE_DEVICES: "0,1,2,3"
+      HSA_VISIBLE_DEVICES: "0,1,2,3"
+      GPU_COUNT: "2"
+      YOLO_START_GPU: "1"
+      YOLO_REPLICAS_PER_GPU: "2"
+      YOLO_BATCH_SIZE: "48"
+      YOLO_PREPROCESS_THREADS: "2"
+      PAIRED_OUTPUT_FPS: "15"
+      DENSITY_PHYSICAL_GPU: "0"
+      SHMEM_SLOTS_PER_STREAM: "${SHMEM_SLOTS_PER_STREAM:-4}"
+      STREAM_COUNT: "${STREAM_COUNT:-50}"
+      DENSITY_DISPLAY_STREAMS: "${DENSITY_DISPLAY_STREAMS:-${STREAM_COUNT:-50}}"
+      ENCODE_MODE: "${ENCODE_MODE:-software}"
+  lemonade:
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    environment:
+      ROCR_VISIBLE_DEVICES: "3"
+      HSA_VISIBLE_DEVICES: "3"

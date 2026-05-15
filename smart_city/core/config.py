@@ -81,6 +81,17 @@ class SystemConfig(BaseModel):
             raise ValueError("num_gpus must be between 1 and 8")
         return v
 
+    @field_validator("max_streams")
+    @classmethod
+    def validate_max_streams(cls, v: int) -> int:
+        """Validate max_streams does not exceed the supported limit of 100."""
+        if v > 100:
+            raise ValueError(
+                f"STREAM_COUNT={v} exceeds the maximum supported limit of 100. "
+                "Set NUM_STREAMS/STREAM_COUNT to 100 or fewer and restart."
+            )
+        return v
+
 
 class PipelineConfig(BaseModel):
     """YOLO inference pipeline config."""
@@ -154,9 +165,7 @@ class RAGConfig(BaseModel):
 class StorageConfig(BaseModel):
     """Database and cache connection config."""
 
-    database_url: str = (
-        "postgresql://smartcity:changeme@timescaledb:5432/smartcity_db"  # pragma: allowlist secret
-    )
+    database_url: str = ""
     pool_size: int = 20
     pool_max_overflow: int = 10
 

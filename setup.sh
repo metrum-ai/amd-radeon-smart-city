@@ -15,17 +15,42 @@ error() { echo -e "${RED}[FAIL]${NC}  $*"; }
 die()   { error "$*"; exit 1; }
 hr()    { echo -e "${BOLD}────────────────────────────────────────────────────${NC}"; }
 
+retry_command() {
+    local label="$1"
+    local attempts="${2:-3}"
+    local delay_s="${3:-15}"
+    shift 3
+
+    local attempt=1
+    while true; do
+        if "$@"; then
+            return 0
+        fi
+        if [ "$attempt" -ge "$attempts" ]; then
+            return 1
+        fi
+        warn "${label} failed (attempt ${attempt}/${attempts}); retrying in ${delay_s}s..."
+        sleep "$delay_s"
+        attempt=$((attempt + 1))
+    done
+}
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Hard requirements (no scaling on detected GPU count — we always use 2)
-REQUIRED_GPUS=2
-YOLO_GPU_ID=0
-DMCOUNT_GPU_ID=1
-LEMONADE_GPU_ID=1
+# shellcheck source=scripts/setup_runtime_defaults.sh
+source "$SCRIPT_DIR/scripts/setup_runtime_defaults.sh"
+
+# Hard requirements and runtime defaults
+MIN_REQUIRED_GPUS=2
 HSA_VERSION="12.0.1"   # RDNA4 / R9700
 DISK_MIN_GB=50
 RAM_MIN_GB=32
+MODEL_EXPORT_VENV_DIR="${MODEL_EXPORT_VENV_DIR:-.venv-model-export}"
+MODEL_EXPORT_PYTHON="$(model_export_python_path "$MODEL_EXPORT_VENV_DIR")"
+MODEL_EXPORT_VENV_READY=0
+SETUP_DOCKER_RETRY_ATTEMPTS="${SETUP_DOCKER_RETRY_ATTEMPTS:-3}"
+SETUP_DOCKER_RETRY_DELAY_S="${SETUP_DOCKER_RETRY_DELAY_S:-20}"
 
 # Model paths (relative to repo root)
 DM_COUNT_PTH="smart_city/models/model_sh_B.pth"
@@ -75,26 +100,45 @@ else
     PREREQ_FAIL=1
 fi
 
+# --- Python + venv support for model export ---
+if ! command -v python3 &>/dev/null; then
+    error "python3 not found — install it first:"
+    error "  sudo apt-get update && sudo apt-get install -y python3 python3-venv"
+    PREREQ_FAIL=1
+else
+    ok "$(python3 --version 2>/dev/null || echo python3)"
+    if python3 -m venv --help &>/dev/null 2>&1; then
+        ok "python3 venv module"
+    else
+        error "python3 venv module not available — install python3-venv:"
+        error "  sudo apt-get update && sudo apt-get install -y python3-venv"
+        PREREQ_FAIL=1
+    fi
+fi
+
 # --- ROCm + AMD GPUs ---
-GPU_COUNT=0
+DETECTED_GPU_COUNT=0
 if command -v rocm-smi &>/dev/null; then
-    GPU_COUNT=$(rocm-smi --showid 2>/dev/null | grep -o "GPU\[[0-9]*\]" | sort -u | wc -l)
-    GPU_COUNT=${GPU_COUNT:-0}
-    if [ "$GPU_COUNT" -eq 0 ]; then
-        GPU_COUNT=$(rocm-smi -i 2>/dev/null | grep -o "GPU\[[0-9]*\]" | sort -u | wc -l)
-        GPU_COUNT=${GPU_COUNT:-0}
+    DETECTED_GPU_COUNT=$(rocm-smi --showid 2>/dev/null | grep -o "GPU\[[0-9]*\]" | sort -u | wc -l)
+    DETECTED_GPU_COUNT=${DETECTED_GPU_COUNT:-0}
+    if [ "$DETECTED_GPU_COUNT" -eq 0 ]; then
+        DETECTED_GPU_COUNT=$(rocm-smi -i 2>/dev/null | grep -o "GPU\[[0-9]*\]" | sort -u | wc -l)
+        DETECTED_GPU_COUNT=${DETECTED_GPU_COUNT:-0}
     fi
 fi
 
 # Fallback: count AMD vendor IDs in /sys/class/drm
-if [ "$GPU_COUNT" -eq 0 ] && [ -d /sys/class/drm ]; then
-    GPU_COUNT=$(for f in /sys/class/drm/card*/device/vendor; do
+if [ "$DETECTED_GPU_COUNT" -eq 0 ] && [ -d /sys/class/drm ]; then
+    DETECTED_GPU_COUNT=$(for f in /sys/class/drm/card*/device/vendor; do
         [ -f "$f" ] && cat "$f" 2>/dev/null
     done | grep -c "0x1002" || echo 0)
 fi
 
-if [ "$GPU_COUNT" -lt "$REQUIRED_GPUS" ]; then
-    error "${GPU_COUNT} AMD GPU(s) detected — minimum ${REQUIRED_GPUS} required"
+SELECTED_GPU_PROFILE="$(select_gpu_profile "$DETECTED_GPU_COUNT")"
+SELECTED_COMPOSE_FILE="$(profile_compose_file "$SELECTED_GPU_PROFILE")"
+
+if [ "$DETECTED_GPU_COUNT" -lt "$MIN_REQUIRED_GPUS" ]; then
+    error "${DETECTED_GPU_COUNT} AMD GPU(s) detected — minimum ${MIN_REQUIRED_GPUS} required"
     error "  GPU 0 runs YOLO; GPU 1 runs DM-Count + Lemonade LLM."
     PREREQ_FAIL=1
 else
@@ -107,16 +151,20 @@ else
             | sed 's/,$//' || echo "")
     fi
     if [ -z "$GPU_NAMES" ]; then
-        if [ "$GPU_COUNT" -gt "$REQUIRED_GPUS" ]; then
-            ok "${GPU_COUNT} AMD GPU(s) detected — using only GPU 0 and GPU 1"
+        if [ "$DETECTED_GPU_COUNT" -ge 4 ]; then
+            ok "${DETECTED_GPU_COUNT} AMD GPU(s) detected — selecting 4-GPU profile"
+        elif [ "$DETECTED_GPU_COUNT" -gt "$MIN_REQUIRED_GPUS" ]; then
+            warn "${DETECTED_GPU_COUNT} AMD GPU(s) detected — no 3-GPU profile; selecting 2-GPU profile"
         else
-            ok "${GPU_COUNT} AMD GPU(s) detected"
+            ok "${DETECTED_GPU_COUNT} AMD GPU(s) detected — selecting 2-GPU profile"
         fi
     else
-        if [ "$GPU_COUNT" -gt "$REQUIRED_GPUS" ]; then
-            ok "${GPU_COUNT} AMD GPU(s): ${GPU_NAMES} — using only GPU 0 and GPU 1"
+        if [ "$DETECTED_GPU_COUNT" -ge 4 ]; then
+            ok "${DETECTED_GPU_COUNT} AMD GPU(s): ${GPU_NAMES} — selecting 4-GPU profile"
+        elif [ "$DETECTED_GPU_COUNT" -gt "$MIN_REQUIRED_GPUS" ]; then
+            warn "${DETECTED_GPU_COUNT} AMD GPU(s): ${GPU_NAMES} — no 3-GPU profile; selecting 2-GPU profile"
         else
-            ok "${GPU_COUNT} AMD GPU(s): ${GPU_NAMES}"
+            ok "${DETECTED_GPU_COUNT} AMD GPU(s): ${GPU_NAMES} — selecting 2-GPU profile"
         fi
     fi
 fi
@@ -150,6 +198,11 @@ else
     ok "${TOTAL_RAM_GB} GB total RAM"
 fi
 
+# --- CPU cores ---
+# Prefer physical cores so SMT siblings do not double the stream-count default.
+CPU_CORE_COUNT="$(detect_cpu_core_count)"
+ok "${CPU_CORE_COUNT} physical CPU core(s) detected"
+
 echo ""
 if [ "$PREREQ_FAIL" -ne 0 ]; then
     die "Fix the errors above then re-run this script."
@@ -160,6 +213,44 @@ fi
 # =============================================================================
 echo -e "${BOLD}[2/4] Environment configuration${NC}"
 echo ""
+
+env_file_value() {
+    local key="$1"; local file="${2:-.env}"
+    [ -f "$file" ] || return 1
+    awk -F= -v key="$key" '
+        $1 == key {
+            sub(/^[^=]*=/, "")
+            print
+            found = 1
+            exit
+        }
+        END { exit found ? 0 : 1 }
+    ' "$file"
+}
+
+explicit_or_existing_env_value() {
+    local key="$1"; local read_existing="${2:-0}"
+    local shell_value="${!key-}"
+    if [ -n "$shell_value" ]; then
+        echo "$shell_value"
+        return
+    fi
+    if [ "$read_existing" -eq 1 ]; then
+        env_file_value "$key" .env || true
+    fi
+}
+
+add_or_replace() {
+    local key="$1"; local value="$2"
+    if [ -f .env ] && awk -F= -v key="$key" '$1 == key { found = 1 } END { exit found ? 0 : 1 }' .env; then
+        sed -i "s|^${key}=.*|${key}=${value}|" .env
+    else
+        if [ -s .env ]; then
+            printf '\n' >> .env
+        fi
+        printf '%s=%s\n' "$key" "$value" >> .env
+    fi
+}
 
 SKIP_ENV=0
 if [ -f .env ]; then
@@ -236,6 +327,50 @@ if [ "$SKIP_ENV" -eq 0 ]; then
 
     echo ""
 
+    # --- MinIO credentials ---
+    echo -e "  ${BOLD}MinIO object store${NC}"
+    while true; do
+        read -rp "  MinIO access key: " _minio_access_key || _minio_access_key=""
+        if [ -z "${_minio_access_key:-}" ]; then
+            error "  Access key cannot be empty."
+            continue
+        fi
+        if [ "$_minio_access_key" = "minioadmin" ] || [ "$_minio_access_key" = "changeme" ]; then
+            warn "  '$_minio_access_key' is a default placeholder — please pick something unique."
+            continue
+        fi
+        break
+    done
+
+    while true; do
+        read -rsp "  MinIO secret key (will not be echoed): " _minio_secret_key
+        echo ""
+        if [ -z "${_minio_secret_key:-}" ]; then
+            error "  Secret key cannot be empty."
+            continue
+        fi
+        if [ "${#_minio_secret_key}" -lt 8 ]; then
+            error "  Secret key must be at least 8 characters."
+            continue
+        fi
+        if [ "$_minio_secret_key" = "minioadmin" ] || [ "$_minio_secret_key" = "changeme" ] || [ "$_minio_secret_key" = "password" ]; then
+            warn "  '$_minio_secret_key' is a default placeholder — please pick something stronger."
+            continue
+        fi
+        read -rsp "  Confirm secret key: " _minio_secret_key2
+        echo ""
+        if [ "$_minio_secret_key" != "$_minio_secret_key2" ]; then
+            error "  Secret keys do not match — try again."
+            continue
+        fi
+        break
+    done
+
+    sed -i "s|^MINIO_ACCESS_KEY=.*|MINIO_ACCESS_KEY=${_minio_access_key}|" .env
+    sed -i "s|^MINIO_SECRET_KEY=.*|MINIO_SECRET_KEY=${_minio_secret_key}|" .env
+
+    echo ""
+
     # --- LLM model name ---
     # Default is the Qwen3-30B-A3B MoE (Unsloth UD-Q4_K_XL GGUF). If the user
     # accepts the default we leave LEMONADE_CHECKPOINT alone (template already
@@ -258,35 +393,31 @@ if [ "$SKIP_ENV" -eq 0 ]; then
     echo ""
 fi
 
-# --- Always (re)apply GPU + ROCm settings ---
-info "Applying GPU assignment to .env..."
+# --- Always (re)apply GPU profile, stream defaults, and ROCm settings ---
+info "Applying ${SELECTED_GPU_PROFILE} runtime profile to .env..."
 
-# pipeline sees both GPUs (it routes YOLO->0, DM-Count->1 internally)
-sed -i "s|^ROCR_VISIBLE_DEVICES=.*|ROCR_VISIBLE_DEVICES=0,1|" .env
-sed -i "s|^HSA_OVERRIDE_GFX_VERSION=.*|HSA_OVERRIDE_GFX_VERSION=${HSA_VERSION}|" .env
-sed -i "s|^NUM_GPUS=.*|NUM_GPUS=${REQUIRED_GPUS}|" .env
+while IFS= read -r assignment; do
+    [ -n "$assignment" ] || continue
+    add_or_replace "${assignment%%=*}" "${assignment#*=}"
+done < <(profile_env_assignments "$SELECTED_GPU_PROFILE")
+add_or_replace "HSA_OVERRIDE_GFX_VERSION" "${HSA_VERSION}"
 
-# Append per-service GPU IDs if not already present (compose can reference these
-# once parameterised; harmless if it doesn't yet).
-add_or_replace() {
-    local key="$1"; local value="$2"
-    if grep -q "^${key}=" .env 2>/dev/null; then
-        sed -i "s|^${key}=.*|${key}=${value}|" .env
-    else
-        # Ensure file ends with a newline before appending, otherwise we glue
-        # the new key onto the previous last line.
-        if [ -s .env ] && [ "$(tail -c 1 .env)" != "" ]; then
-            echo "" >> .env
-        fi
-        echo "${key}=${value}" >> .env
-    fi
-}
-add_or_replace "YOLO_GPU_ID"     "${YOLO_GPU_ID}"
-add_or_replace "DMCOUNT_GPU_ID"  "${DMCOUNT_GPU_ID}"
-add_or_replace "LEMONADE_GPU_ID" "${LEMONADE_GPU_ID}"
+# Shell environment values win. Existing .env values win only when the user kept
+# that file; freshly scaffolded .env values are treated as template defaults.
+STREAM_OVERRIDE="$(explicit_or_existing_env_value "STREAM_COUNT" "$SKIP_ENV")"
+DENSITY_OVERRIDE="$(explicit_or_existing_env_value "DENSITY_DISPLAY_STREAMS" "$SKIP_ENV")"
+SELECTED_STREAM_COUNT="$(select_stream_count "$CPU_CORE_COUNT" "$STREAM_OVERRIDE")"
+SELECTED_DENSITY_DISPLAY_STREAMS="$(select_density_display_streams "$SELECTED_STREAM_COUNT" "$DENSITY_OVERRIDE")"
+add_or_replace "STREAM_COUNT" "${SELECTED_STREAM_COUNT}"
+add_or_replace "DENSITY_DISPLAY_STREAMS" "${SELECTED_DENSITY_DISPLAY_STREAMS}"
 
-ok "YOLO=GPU ${YOLO_GPU_ID}, DM-Count=GPU ${DMCOUNT_GPU_ID}, Lemonade=GPU ${LEMONADE_GPU_ID}"
-ok "ROCR_VISIBLE_DEVICES=0,1, HSA_OVERRIDE_GFX_VERSION=${HSA_VERSION}"
+ok "Profile ${SELECTED_GPU_PROFILE}: compose override ${SELECTED_COMPOSE_FILE}"
+if [ "$SELECTED_GPU_PROFILE" = "4gpu" ]; then
+    ok "GPU 0 → DM-Count, GPU 1-2 → YOLO, GPU 3 → Lemonade"
+else
+    ok "GPU 0 → YOLO, GPU 1 → DM-Count + Lemonade"
+fi
+ok "STREAM_COUNT=${SELECTED_STREAM_COUNT}, DENSITY_DISPLAY_STREAMS=${SELECTED_DENSITY_DISPLAY_STREAMS} (${CPU_CORE_COUNT} physical cores)"
 echo ""
 
 # --- WebRTC ICE candidate hosts ---
@@ -312,24 +443,32 @@ echo -e "${BOLD}[3/4] Model bootstrap${NC}"
 echo ""
 
 # ---------------------------------------------------------------------------
-# pip helper — installs a package if not already importable.
-# Tries plain pip first; falls back to --break-system-packages for Ubuntu
-# 23.04+ / Debian 12+ where the system Python is "externally managed".
+# Model export venv helpers.
+# Ubuntu 24 marks system Python as externally managed, so setup never installs
+# model-export packages into system Python and never uses --break-system-packages.
 # ---------------------------------------------------------------------------
-_pip_install() {
+ensure_model_export_venv() {
+    if [ "$MODEL_EXPORT_VENV_READY" -eq 1 ]; then
+        return
+    fi
+    if [ ! -x "$MODEL_EXPORT_PYTHON" ]; then
+        info "Creating model export venv at ${MODEL_EXPORT_VENV_DIR}..."
+        python3 -m venv "$MODEL_EXPORT_VENV_DIR"
+    fi
+    "$MODEL_EXPORT_PYTHON" -m pip install --quiet --upgrade pip setuptools wheel
+    MODEL_EXPORT_VENV_READY=1
+}
+
+_venv_pip_install() {
     local pkg="$1"; local import_name="${2:-$1}"
-    if python3 -c "import ${import_name}" &>/dev/null 2>&1; then
+    ensure_model_export_venv
+    if "$MODEL_EXPORT_PYTHON" -c "import ${import_name}" &>/dev/null 2>&1; then
         return 0
     fi
-    info "Installing ${pkg}..."
-    if python3 -m pip install --quiet "$pkg" 2>/dev/null; then
-        return 0
+    info "Installing ${pkg} into ${MODEL_EXPORT_VENV_DIR}..."
+    if ! "$MODEL_EXPORT_PYTHON" -m pip install --quiet "$pkg"; then
+        die "Failed to install ${pkg}. The system Python was left untouched; inspect ${MODEL_EXPORT_VENV_DIR} and retry."
     fi
-    # PEP 668 externally-managed environment — try with override flag
-    if python3 -m pip install --quiet --break-system-packages "$pkg" 2>/dev/null; then
-        return 0
-    fi
-    die "Failed to install ${pkg}. Run manually: pip install ${pkg}"
 }
 
 # --- DM-Count model ---
@@ -346,13 +485,10 @@ if [ -f "$DM_COUNT_ONNX" ]; then
 elif [ -f "$DM_COUNT_PTH" ]; then
     SIZE_MB=$(du -m "$DM_COUNT_PTH" | awk '{print $1}')
     ok "DM-Count weights present: ${DM_COUNT_PTH} (${SIZE_MB} MB) — exporting to ONNX now"
-    if ! command -v python3 &>/dev/null; then
-        die "python3 not found — install python3 and re-run."
-    fi
-    _pip_install "torch" "torch"
-    _pip_install "onnx" "onnx"
-    _pip_install "onnxconverter-common" "onnxconverter_common"
-    if ! python3 scripts/export_dm_count_onnx.py \
+    _venv_pip_install "torch" "torch"
+    _venv_pip_install "onnx>=1.12.0,<2.0.0" "onnx"
+    _venv_pip_install "onnxconverter-common" "onnxconverter_common"
+    if ! PYTHONPATH="$SCRIPT_DIR/smart_city" "$MODEL_EXPORT_PYTHON" -m combined_pipeline.inference.export_dm_count \
             --weights "$DM_COUNT_PTH" \
             --output  "$DM_COUNT_ONNX"; then
         error "DM-Count export failed — see error above."
@@ -361,25 +497,22 @@ elif [ -f "$DM_COUNT_PTH" ]; then
     ok "DM-Count ONNX exported: ${DM_COUNT_ONNX}"
 else
     info "DM-Count model missing — downloading weights and exporting ONNX..."
-    if ! command -v python3 &>/dev/null; then
-        die "python3 not found — install python3 and re-run."
-    fi
-    _pip_install "gdown"
-    _pip_install "torch" "torch"
-    _pip_install "onnx" "onnx"
-    _pip_install "onnxconverter-common" "onnxconverter_common"
+    _venv_pip_install "gdown" "gdown"
+    _venv_pip_install "torch" "torch"
+    _venv_pip_install "onnx>=1.12.0,<2.0.0" "onnx"
+    _venv_pip_install "onnxconverter-common" "onnxconverter_common"
 
     mkdir -p "$(dirname "$DM_COUNT_PTH")"
-    if ! python3 -m gdown 1nnIHPaV9RGqK8JHL645zmRvkNrahD9ru -O "$DM_COUNT_PTH"; then
+    if ! "$MODEL_EXPORT_PYTHON" -m gdown 1nnIHPaV9RGqK8JHL645zmRvkNrahD9ru -O "$DM_COUNT_PTH"; then
         error "Download failed."
         echo "         Download manually and re-run:"
-        echo "           pip install gdown"
-        echo "           gdown 1nnIHPaV9RGqK8JHL645zmRvkNrahD9ru -O ${DM_COUNT_PTH}"
+        echo "           ${MODEL_EXPORT_PYTHON} -m pip install gdown"
+        echo "           ${MODEL_EXPORT_PYTHON} -m gdown 1nnIHPaV9RGqK8JHL645zmRvkNrahD9ru -O ${DM_COUNT_PTH}"
         die "Cannot continue without DM-Count weights."
     fi
     ok "DM-Count weights downloaded: ${DM_COUNT_PTH}"
 
-    if ! python3 scripts/export_dm_count_onnx.py \
+    if ! PYTHONPATH="$SCRIPT_DIR/smart_city" "$MODEL_EXPORT_PYTHON" -m combined_pipeline.inference.export_dm_count \
             --weights "$DM_COUNT_PTH" \
             --output  "$DM_COUNT_ONNX"; then
         error "DM-Count export failed — see error above."
@@ -394,11 +527,11 @@ if [ -f "$YOLO_ONNX" ]; then
     ok "YOLO ONNX present: ${YOLO_ONNX} (${SIZE_MB} MB)"
 else
     info "YOLO ONNX missing — exporting ${YOLO_PT} → ${YOLO_ONNX}"
-    if ! command -v python3 &>/dev/null; then
-        die "python3 not found — install python3 and re-run."
-    fi
-    _pip_install "ultralytics"
-    if ! python3 scripts/export_yolo_onnx.py --model "$YOLO_PT" --output "$YOLO_ONNX"; then
+    _venv_pip_install "torch" "torch"
+    _venv_pip_install "ultralytics" "ultralytics"
+    _venv_pip_install "onnx>=1.12.0,<2.0.0" "onnx"
+    _venv_pip_install "onnxruntime" "onnxruntime"
+    if ! "$MODEL_EXPORT_PYTHON" scripts/export_yolo_onnx.py --model "$YOLO_PT" --output "$YOLO_ONNX"; then
         error "YOLO export failed — see error above."
         die "Cannot continue without YOLO ONNX."
     fi
@@ -413,15 +546,21 @@ echo ""
 echo -e "${BOLD}[4/4] Building & starting services...${NC}"
 echo ""
 
+COMPOSE_ARGS=(-f docker-compose.yml -f "$SELECTED_COMPOSE_FILE")
+
 info "Building all service images (this takes a while on first run)..."
-if ! docker compose build; then
+if ! retry_command "Docker Compose build" "$SETUP_DOCKER_RETRY_ATTEMPTS" "$SETUP_DOCKER_RETRY_DELAY_S" \
+    docker compose "${COMPOSE_ARGS[@]}" build; then
     die "Docker build failed — check output above."
 fi
 ok "All images built"
 echo ""
 
 info "Starting services..."
-docker compose up -d
+if ! retry_command "Docker Compose startup" "$SETUP_DOCKER_RETRY_ATTEMPTS" "$SETUP_DOCKER_RETRY_DELAY_S" \
+    docker compose "${COMPOSE_ARGS[@]}" up -d; then
+    die "Docker Compose startup failed — check output above."
+fi
 
 echo ""
 hr
@@ -429,8 +568,16 @@ ok "All services started."
 hr
 echo ""
 echo "  GPU layout:"
-echo "    GPU 0  →  YOLO (pipeline)"
-echo "    GPU 1  →  DM-Count (pipeline) + Lemonade (LLM)"
+if [ "$SELECTED_GPU_PROFILE" = "4gpu" ]; then
+    echo "    GPU 0      →  DM-Count (pipeline)"
+    echo "    GPU 1,2    →  YOLO (pipeline, 2 replicas/GPU)"
+    echo "    GPU 3      →  Lemonade (LLM)"
+else
+    echo "    GPU 0      →  YOLO (pipeline, 2 replicas)"
+    echo "    GPU 1      →  DM-Count (pipeline) + Lemonade (LLM)"
+fi
+echo "    profile    →  ${SELECTED_GPU_PROFILE} (${SELECTED_COMPOSE_FILE})"
+echo "    streams    →  ${SELECTED_STREAM_COUNT} total, ${SELECTED_DENSITY_DISPLAY_STREAMS} density display"
 echo ""
 echo "  Endpoints:"
 echo "    Frontend  →  http://localhost:5173    (or whatever 'frontend' maps to)"

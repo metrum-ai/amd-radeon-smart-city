@@ -193,6 +193,7 @@ def run_pipeline(
     density_timeout_ms = float(density_cfg.get("batch_timeout_ms", 50))
     density_infer_w = int(density_cfg.get("infer_width", 320))
     density_infer_h = int(density_cfg.get("infer_height", 240))
+    density_frame_interval = max(1, int(density_cfg.get("frame_interval", 1)))
     density_migraphx_options = density_cfg.get("migraphx_options", {}) or {}
 
     host = str(mtx_cfg["host"])
@@ -229,11 +230,12 @@ def run_pipeline(
 
     logger.info(
         "Pipeline: streams=%d yolo_gpus=%d replicas/gpu=%d batch=%d(per-replica=%d) "
-        "density=%s(%d streams, phys-gpu%d) decode=%s encode=%s",
+        "density=%s(%d streams, phys-gpu%d, every=%d) decode=%s encode=%s",
         stream_count, gpu_count, replicas_per_gpu, batch_size, replica_batch_size,
         "onnx-gpu" if density_enabled else "off",
         display_streams if density_enabled else 0,
         density_physical_gpu,
+        density_frame_interval,
         decode_mode,
         "hw(vaapi)" if use_hw_encode else "sw(libx264)",
     )
@@ -440,6 +442,9 @@ def run_pipeline(
                 hw_decode_stagger_ms=hw_decode_stagger_ms if stream_decode_mode == "hardware" else 0,
                 density_in_queue=density_in_q if sid < display_streams else None,
                 density_out_queue=density_out_qs.get(sid),
+                density_frame_interval=density_frame_interval,
+                density_infer_w=density_infer_w if density_enabled else 0,
+                density_infer_h=density_infer_h if density_enabled else 0,
                 use_hw_encode=use_hw_encode,
                 shared_stats=shared_stats,
             ),

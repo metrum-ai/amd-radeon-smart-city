@@ -20,13 +20,13 @@ services:
     image: timescale/timescaledb:2.14.2-pg16
     container_name: smartcity_timescaledb
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-smartcity}
+      POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-smartcity_db}
     volumes:
       - timescaledb_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smartcity}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -65,8 +65,8 @@ services:
     image: minio/minio:RELEASE.2024-01-18T22-51-28Z
     container_name: smartcity_minio
     environment:
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set in .env}
     command: minio server /minio_data --console-address ":9001"
     volumes:
       - minio_data:/minio_data
@@ -88,6 +88,8 @@ services:
     environment:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set in .env}
+      MINIO_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set in .env}
     volumes:
       - milvus_data:/var/lib/milvus
     depends_on:
@@ -145,10 +147,7 @@ services:
       # Note: HSA_OVERRIDE_GFX_VERSION pinned at "12.0.1" (gfx1201 / RDNA4 R9700).
     devices:
       - /dev/kfd:/dev/kfd
-      - /dev/dri/card0:/dev/dri/card0
-      - /dev/dri/card1:/dev/dri/card1
-      - /dev/dri/renderD128:/dev/dri/renderD128
-      - /dev/dri/renderD129:/dev/dri/renderD129
+      - /dev/dri:/dev/dri
     group_add:
       - "44"    # video group (GID 44)
       - "109"   # render group (GID 109)
@@ -176,7 +175,7 @@ services:
       # Shared pipeline stats (written by pipeline container, read by api)
       - pipeline_stats:/pipeline_stats:ro
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-smartcity}:${POSTGRES_PASSWORD}@timescaledb:5432/${POSTGRES_DB:-smartcity_db}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@timescaledb:5432/${POSTGRES_DB:-smartcity_db}
       MILVUS_HOST: ${MILVUS_HOST:-milvus}
       MILVUS_PORT: ${MILVUS_PORT:-19530}
       # LLM inference — defaults to local lemonade server (GPU 1, ROCm).
@@ -190,7 +189,7 @@ services:
       EMBED_BASE_URL: ${EMBED_BASE_URL:-http://vllm-embed:8000}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       NUM_GPUS: ${NUM_GPUS:-2}
-      NUM_STREAMS: ${STREAM_COUNT:-50}
+      NUM_STREAMS: ${STREAM_COUNT:-25}
       DOCS_INGEST_PATH: /app/data/docs
       ROCR_VISIBLE_DEVICES: ${ROCR_VISIBLE_DEVICES:-0,1}
       HSA_OVERRIDE_GFX_VERSION: ${HSA_OVERRIDE_GFX_VERSION:-12.0.1}
@@ -324,7 +323,7 @@ services:
     volumes:
       - ./videos:/videos:ro
     environment:
-      STREAM_COUNT: "${STREAM_COUNT:-50}"
+      STREAM_COUNT: "${STREAM_COUNT:-25}"
       VIDEO_DIR: /videos
       INPUT_BASE_RTSP: ${INPUT_BASE_RTSP:-rtsp://mediamtx:8554/cam}
       REALTIME_INPUT: ${REALTIME_INPUT:-1}
@@ -348,11 +347,8 @@ services:
       rtsp-input-publisher:
         condition: service_started
     devices:
-      - /dev/dri/card0:/dev/dri/card0
-      - /dev/dri/renderD128:/dev/dri/renderD128
-      - /dev/dri/card1:/dev/dri/card1
-      - /dev/dri/renderD129:/dev/dri/renderD129
       - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
     group_add:
       - video
       - render
@@ -363,13 +359,16 @@ services:
       - pipeline_stats:/pipeline_stats
     environment:
       HSA_OVERRIDE_GFX_VERSION: "12.0.1"
-      # Disable VA-API to prevent it racing with MIGraphX GPU init and causing a KFD hang
+      # Disable VA-API by default; this release keeps software encode.
       LIBVA_DRIVER_NAME: "null"
       LIBVA_DRIVERS_PATH: "/dev/null"
       ROCR_VISIBLE_DEVICES: "0,1"
       HSA_VISIBLE_DEVICES: "0,1"
-      STREAM_COUNT: "${STREAM_COUNT:-50}"
-      DENSITY_DISPLAY_STREAMS: "${DENSITY_DISPLAY_STREAMS:-50}"
+      STREAM_COUNT: "${STREAM_COUNT:-25}"
+      DENSITY_DISPLAY_STREAMS: "${DENSITY_DISPLAY_STREAMS:-25}"
+      DENSITY_EVERY_N_FRAMES: "${DENSITY_EVERY_N_FRAMES:-1}"
+      ENCODE_MODE: "${ENCODE_MODE:-software}"
+      PAIRED_OUTPUT_FPS: "${PAIRED_OUTPUT_FPS:-30}"
       PIPELINE_STATS_FILE: "/pipeline_stats/pipeline_stats.json"
       YOLO_START_GPU: ${YOLO_GPU_ID:-0}
       DENSITY_PHYSICAL_GPU: ${DMCOUNT_GPU_ID:-1}

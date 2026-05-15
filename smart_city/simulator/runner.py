@@ -48,6 +48,9 @@ def _load_zones_from_metadata() -> list[ZoneSpec]:
     """
     import yaml  # noqa: PLC0415
     from pathlib import Path as _Path  # noqa: PLC0415
+    from smart_city.core.stream_allocation import (  # noqa: PLC0415
+        apply_city_allocation,
+    )
     _cfg_path = (
         _Path(__file__).resolve().parents[1] / "config" / "streams_metadata.yaml"
     )
@@ -55,7 +58,7 @@ def _load_zones_from_metadata() -> list[ZoneSpec]:
         with open(_cfg_path, encoding="utf-8") as _f:
             _cfg = yaml.safe_load(_f) or {}
         zones = []
-        for s in _cfg.get("streams", []):
+        for s in apply_city_allocation(list(_cfg.get("streams", []))):
             sid = int(s["id"])
             zone_id = s.get("zone_id") or f"cam{sid}_main"
             zone_type = s.get("zone_type", "crowd_density")

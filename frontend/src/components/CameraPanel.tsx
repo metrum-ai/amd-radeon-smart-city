@@ -18,7 +18,7 @@ import { useMapData } from "../hooks/useMapData";
 import { API_BASE } from "../lib/runtimeConfig";
 
 const PAGE_SIZE = 6;
-const STREAM_LIMIT = 50;
+const STREAM_LIMIT = 100;
 
 import "../styles/components/CameraPanel.css";
 

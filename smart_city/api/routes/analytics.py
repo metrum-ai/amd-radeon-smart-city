@@ -359,6 +359,10 @@ _RANGE_DAYS: dict = {"day": 1, "week": 7, "month": 30, "quarter": 90}
 @lru_cache(maxsize=1)
 def _load_stream_city_index() -> tuple[dict[str, str], dict[str, str]]:
     """Load zone->city and location->city mappings from stream metadata."""
+    from smart_city.core.stream_allocation import (  # noqa: PLC0415
+        apply_city_allocation,
+    )
+
     cfg_path = (
         Path(__file__).resolve().parents[2]
         / "config"
@@ -370,7 +374,7 @@ def _load_stream_city_index() -> tuple[dict[str, str], dict[str, str]]:
         return zone_to_city, location_to_city
     with cfg_path.open("r", encoding="utf-8") as fh:
         loaded = yaml.safe_load(fh) or {}
-    for stream in loaded.get("streams", []):
+    for stream in apply_city_allocation(list(loaded.get("streams", []))):
         city = str(stream.get("city", "")).strip()
         zone_id = str(stream.get("zone_id", "")).strip()
         if not zone_id:
@@ -409,24 +413,33 @@ def _stream_matches_city(
             return True
     _, location_to_city = _load_stream_city_index()
     location_name = str(stream_data.get("location_name", "")).strip()
-    return location_to_city.get(location_name) == city
+    if location_to_city.get(location_name) == city:
+        return True
+    # Fallback for synthesised streams beyond YAML pool size: city is
+    # stored directly on the density_cache entry by _resolve_stream_cfg.
+    return str(stream_data.get("city", "")).strip() == city
 
 
 def _zones_from_cache(cache: dict) -> List[dict]:
     """Extract a flat list of zone dicts from the density cache.
+
+    Each zone dict is augmented with the parent stream's ``city`` field
+    so that synthesised streams (beyond YAML pool size) can be matched
+    by city when zone_id is not in the static YAML index.
 
     Args:
         cache: app.state.density_cache mapping stream_id → stream data.
 
     Returns:
         List of zone dicts each containing zone_id, zone_name,
-        person_count, density_score.
+        person_count, density_score, and city.
     """
     zones: List[dict] = []
     for data in cache.values():
+        city = str(data.get("city", "")).strip()
         for z in data.get("zones", []):
             if z.get("zone_id"):
-                zones.append(z)
+                zones.append({**z, "city": city})
     return zones
 
 
@@ -469,6 +482,7 @@ async def get_trends(
                 live_zones = [
                     z for z in live_zones
                     if str(z.get("zone_id", "")).strip() in allowed_zone_ids
+                    or str(z.get("city", "")).strip() == city
                 ]
             if not live_zones:
                 return TrendResponse(
@@ -594,6 +608,7 @@ async def get_trends(
             live_zones = [
                 z for z in live_zones
                 if str(z.get("zone_id", "")).strip() in allowed_zone_ids
+                or str(z.get("city", "")).strip() == city
             ]
         now_dow = now_utc.weekday()
         if not live_zones:
@@ -671,6 +686,7 @@ async def get_trends(
             live_zones = [
                 z for z in live_zones
                 if str(z.get("zone_id", "")).strip() in allowed_zone_ids
+                or str(z.get("city", "")).strip() == city
             ]
         now_dow = now_utc.weekday()
         trend_zones = [

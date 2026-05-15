@@ -8,6 +8,7 @@ then loaded by ORT + MIGraphXExecutionProvider for GPU inference.
 """
 from __future__ import annotations
 
+import argparse
 import logging
 import sys
 from pathlib import Path
@@ -91,3 +92,27 @@ def export_dm_count_onnx(
     except Exception:
         logger.exception("DM-Count ONNX export failed")
         return False
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Export DM-Count weights to ONNX")
+    parser.add_argument("--weights", required=True, help="Path to DM-Count .pth weights")
+    parser.add_argument("--output", required=True, help="Path to write ONNX model")
+    parser.add_argument("--batch-size", type=int, default=4, help="Fixed export batch size")
+    parser.add_argument("--infer-width", type=int, default=320, help="Export input width")
+    parser.add_argument("--infer-height", type=int, default=240, help="Export input height")
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
+    if not export_dm_count_onnx(
+        args.weights,
+        args.output,
+        batch_size=args.batch_size,
+        infer_w=args.infer_width,
+        infer_h=args.infer_height,
+    ):
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()

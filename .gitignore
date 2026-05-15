@@ -1,3 +1,5 @@
+# Created by Metrum AI for AMD
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -110,6 +112,7 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.venv-model-export/
 env/
 venv/
 ENV/
