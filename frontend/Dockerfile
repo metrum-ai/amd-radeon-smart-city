@@ -1,16 +1,19 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
-# Created by Metrum AI
 # Stage 1: Build frontend with Node 22 Alpine (smaller base)
 FROM node:22-alpine AS build
 
 WORKDIR /app
 
-# Install pnpm globally
-RUN npm install -g pnpm
+ENV CI=true
+
+# Install pnpm globally — version pinned to match pnpm-lock.yaml format
+RUN npm install -g pnpm@10.30.2
 
 # Copy package files first for better layer caching
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml* .npmrc* ./
 
 # Install dependencies (frozen lockfile for reproducibility)
 RUN pnpm install --frozen-lockfile
@@ -19,10 +22,9 @@ RUN pnpm install --frozen-lockfile
 COPY . ./
 RUN pnpm run build
 
-# Stage 2: Serve with nginx (gzip, caching headers, ~25MB image)
-FROM nginx:alpine AS runtime
+# Stage 2: Serve with patched nginx stable (gzip, caching headers)
+FROM nginx:1.30.1-alpine AS runtime
 
-LABEL maintainer="Metrum AI <team@metrum.ai>"
 LABEL description="Smart City Analytics Platform - Gateway"
 LABEL version="1.0.0"
 
@@ -44,7 +46,7 @@ EXPOSE 80
 EXPOSE 8189
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD wget -qO- http://localhost/health || exit 1
+    CMD wget -qO- http://127.0.0.1/health || exit 1
 
 USER nginx
 

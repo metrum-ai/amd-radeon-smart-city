@@ -1,4 +1,6 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 """Crowd density analyser: counts persons per zone via polygon ray-casting."""
 

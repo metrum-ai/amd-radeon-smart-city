@@ -1,14 +1,25 @@
-// Created by Metrum AI for AMD
+// Copyright Advanced Micro Devices, Inc.
+//
+// SPDX-License-Identifier: MIT
 
-import { useEffect, useCallback, useMemo, useState, useRef, memo, useId } from "react";
 import {
-  MapContainer,
-  TileLayer,
-  CircleMarker,
-  Tooltip,
-  useMap,
-  useMapEvents,
-} from "react-leaflet";
+  useEffect,
+  useCallback,
+  useMemo,
+  useState,
+  useRef,
+  memo,
+  useId,
+  type CSSProperties,
+} from "react";
+import {
+  PureCircleMarker,
+  PureMapContainer,
+  PureTileLayer,
+  PureTooltip,
+} from "./map/PureLeafletMap";
+import { useLeafletMap } from "./map/LeafletMapContext";
+import type { LeafletEvent, Map as LeafletMapInstance } from "leaflet";
 import Place from "@mui/icons-material/Place";
 import "leaflet/dist/leaflet.css";
 import { useAppSelector, useAppDispatch } from "../store";
@@ -32,17 +43,20 @@ import "../styles/components/MapPanel.css";
 const GOOGLE_TILES =
   "https://mt{s}.google.com/vt/lyrs=r&x={x}&y={y}&z={z}";
 const GOOGLE_ATTRIBUTION = "Google Maps";
+const TOOLTIP_OFFSET: [number, number] = [0, -8];
 
 function MapInvalidator() {
-  const map = useMap();
+  const map = useLeafletMap();
   const mode = useAppSelector(selectMode);
 
   useEffect(() => {
+    if (!map) return;
     const timer = setTimeout(() => map.invalidateSize(), 400);
     return () => clearTimeout(timer);
   }, [mode, map]);
 
   useEffect(() => {
+    if (!map) return;
     const container = map.getContainer();
     if (!container || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => map.invalidateSize());
@@ -54,8 +68,9 @@ function MapInvalidator() {
 }
 
 function FlyTo({ center, zoom }: { center: [number, number]; zoom: number }) {
-  const map = useMap();
+  const map = useLeafletMap();
   useEffect(() => {
+    if (!map) return;
     map.flyTo(center, zoom, { duration: 1.2 });
   }, [center, zoom, map]);
   return null;
@@ -63,7 +78,20 @@ function FlyTo({ center, zoom }: { center: [number, number]; zoom: number }) {
 
 function useZoom(initial: number) {
   const [zoom, setZoom] = useState(initial);
-  useMapEvents({ zoomend: (e) => setZoom(e.target.getZoom()) });
+  const map = useLeafletMap();
+
+  useEffect(() => {
+    if (!map) return;
+    const handleZoomEnd = (e: LeafletEvent) => {
+      setZoom((e.target as LeafletMapInstance).getZoom());
+    };
+    map.on("zoomend", handleZoomEnd);
+    setZoom(map.getZoom());
+    return () => {
+      map.off("zoomend", handleZoomEnd);
+    };
+  }, [map]);
+
   return zoom;
 }
 
@@ -74,7 +102,7 @@ function zoomScale(zoom: number): number {
   return 1.8;
 }
 
-const FILL_VIDEO: React.CSSProperties = {
+const FILL_VIDEO: CSSProperties = {
   display: "block",
   width: "100%",
   height: "100%",
@@ -311,7 +339,7 @@ function usePooledStream(whepUrl: string | undefined) {
 // TooltipVideo - wires a pooled MediaStream into a <video> element
 // ----------------------------------------------------------------
 
-const TOOLTIP_SPINNER_WRAP: React.CSSProperties = {
+const TOOLTIP_SPINNER_WRAP: CSSProperties = {
   position: "absolute",
   inset: 0,
   display: "flex",
@@ -322,10 +350,12 @@ const TOOLTIP_SPINNER_WRAP: React.CSSProperties = {
 
 const TooltipVideo = memo(function TooltipVideo({
   whepUrl,
+  reserveSpace,
   width,
   aspectRatio,
 }: {
   whepUrl?: string;
+  reserveSpace: boolean;
   width?: number;
   aspectRatio?: string;
 }) {
@@ -406,7 +436,7 @@ const TooltipVideo = memo(function TooltipVideo({
     [width, aspectRatio],
   );
 
-  if (!whepUrl) return null;
+  if (!reserveSpace) return null;
 
   return (
     <div style={containerStyle}>
@@ -417,7 +447,7 @@ const TooltipVideo = memo(function TooltipVideo({
         playsInline
         style={FILL_VIDEO}
       />
-      {!playing && !failed && (
+      {whepUrl && !playing && !failed && (
         <div style={TOOLTIP_SPINNER_WRAP}>
           <span className="map-loading-spinner" />
         </div>
@@ -478,7 +508,7 @@ const HotspotMarkers = memo(function HotspotMarkers() {
 
   return (
     <>
-      {cameras.map((cam, i) => {
+      {cameras.map((cam) => {
         const baseR = SEV_RADIUS[cam.sev];
         const styleCfg = config.styles[cam.sev];
         const r = Math.round((cam.markerRadius ?? styleCfg?.radius ?? baseR) * scale);
@@ -486,7 +516,7 @@ const HotspotMarkers = memo(function HotspotMarkers() {
         const isCrit = cam.sev === "critical";
         const pulse = cam.markerPulse ?? styleCfg?.pulse ?? isCrit;
         return (
-          <CircleMarker
+          <PureCircleMarker
             key={`marker-${cam.stream_id}`}
             center={[cam.lat, cam.lon]}
             radius={r}
@@ -516,7 +546,7 @@ const HotspotMarkers = memo(function HotspotMarkers() {
               },
             }}
           >
-            <Tooltip direction="top" offset={[0, -8]}>
+            <PureTooltip direction="top" offset={TOOLTIP_OFFSET}>
               <div className="hotspot-tooltip">
                 <b>{cam.name}</b>
                 <div className="hotspot-tooltip__row">
@@ -532,12 +562,13 @@ const HotspotMarkers = memo(function HotspotMarkers() {
                       ? cam.webrtcWhepUrl
                       : undefined
                   }
+                  reserveSpace={Boolean(cam.webrtcWhepUrl)}
                   width={cam.tooltipWidth}
                   aspectRatio={cam.tooltipAspectRatio}
                 />
               </div>
-            </Tooltip>
-          </CircleMarker>
+            </PureTooltip>
+          </PureCircleMarker>
         );
       })}
     </>
@@ -742,14 +773,14 @@ export default function MapPanel() {
   return (
     <div className="map-panel">
       <div className="map-inner">
-        <MapContainer
+        <PureMapContainer
           center={loc.center}
           zoom={loc.zoom}
           zoomControl={false}
           attributionControl={false}
           style={{ width: "100%", height: "100%" }}
         >
-          <TileLayer
+          <PureTileLayer
             attribution={GOOGLE_ATTRIBUTION}
             url={GOOGLE_TILES}
             subdomains="0123"
@@ -758,7 +789,7 @@ export default function MapPanel() {
           <MapInvalidator />
           <FlyTo center={loc.center} zoom={loc.zoom} />
           <HotspotMarkers />
-        </MapContainer>
+        </PureMapContainer>
       </div>
 
       <div

@@ -1,10 +1,13 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 """GAIA-backed base agent runtime for incident workflows."""
 
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import os
@@ -13,6 +16,12 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+try:
+    from openai import OpenAIError
+except ImportError:
+    class OpenAIError(RuntimeError):  # type: ignore[no-redef]
+        """Fallback when openai is unavailable in lint-only environments."""
 
 try:
     from gaia.agents.base.agent import Agent
@@ -39,7 +48,7 @@ else:
         from gaia.llm.providers import openai_provider as _oai_mod
 
         def _safe_chat(self, messages, model=None, stream=False, **kwargs):
-            """Retry-wrapped chat that guards against choices=None."""
+            """Retry-wrapped chat that preserves native tool-call payloads."""
             for _attempt in range(3):
                 response = self._client.chat.completions.create(
                     model=model or self._model,
@@ -50,7 +59,34 @@ else:
                 if stream:
                     return self._handle_stream(response)
                 if response and response.choices:
-                    content = response.choices[0].message.content
+                    choice = response.choices[0]
+                    message = choice.message
+                    tool_calls = getattr(message, "tool_calls", None)
+                    if tool_calls:
+                        return json.dumps(
+                            {
+                                "__tool_calls__": [
+                                    (
+                                        call.model_dump()
+                                        if hasattr(call, "model_dump")
+                                        else call
+                                    )
+                                    for call in tool_calls
+                                ],
+                                "finish_reason": getattr(
+                                    choice, "finish_reason", ""
+                                ),
+                                "content": (
+                                    message.content
+                                    or getattr(
+                                        message, "reasoning_content", None
+                                    )
+                                ),
+                            }
+                        )
+                    content = message.content or getattr(
+                        message, "reasoning_content", None
+                    )
                     return content if content is not None else ""
                 # choices is None/empty — transient lemonade error, retry
                 logger.warning(
@@ -66,7 +102,7 @@ else:
 
         _oai_mod.OpenAIProvider.chat = _safe_chat
         logger.debug("Patched OpenAIProvider.chat with retry+None-choices guard.")
-    except Exception as _patch_exc:
+    except (AttributeError, ImportError) as _patch_exc:
         logger.warning("Could not patch OpenAIProvider.chat: %s", _patch_exc)
 
 from smart_city.llm.agents.tools import execute_tool
@@ -182,7 +218,13 @@ class GaiaBaseAgent(Agent):
 
         try:
             result = await asyncio.to_thread(self.process_query, user_message)
-        except Exception as exc:  # pylint: disable=broad-except
+        except (
+            concurrent.futures.TimeoutError,
+            OpenAIError,
+            OSError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
             logger.warning(
                 "%s process_query raised: %s", self._agent_name, exc
             )
@@ -235,7 +277,7 @@ class GaiaBaseAgent(Agent):
                         raw_result=result,
                     )
                 )
-            except Exception:  # pylint: disable=broad-except
+            except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
                 pass  # never let a callback error abort a tool call
 
         return result

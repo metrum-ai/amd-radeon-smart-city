@@ -1,4 +1,10 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
+
+"""
+Startup for the combined pipeline.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +16,7 @@ import yaml
 
 
 def load_pipeline_config(path: str | Path | None = None) -> dict[str, Any]:
+    """Load the pipeline configuration."""
     if path is None:
         path = os.environ.get("PIPELINE_CONFIG") or (
             Path(__file__).resolve().parent.parent / "config" / "pipeline.yaml"
@@ -96,6 +103,12 @@ def _apply_env_overrides(cfg: dict[str, Any]) -> dict[str, Any]:
         cfg.setdefault("_env", {})["output_base_rtsp"] = v
     if v := os.environ.get("DECODE_MODE"):
         cfg.setdefault("ingest", {})["decode_mode"] = v
+    if v := os.environ.get("HW_DECODE_VAAPI_GPU"):
+        cfg.setdefault("ingest", {})["hw_decode_vaapi_gpu"] = int(v)
+    if v := os.environ.get("HW_DECODE_MAX_STREAMS"):
+        cfg.setdefault("ingest", {})["hw_decode_max_streams"] = int(v)
+    if v := os.environ.get("HW_DECODE_STAGGER_MS"):
+        cfg.setdefault("ingest", {})["hw_decode_stagger_ms"] = int(v)
     if v := os.environ.get("ENCODE_MODE"):
         cfg.setdefault("output", {})["encode_mode"] = v
     if v := os.environ.get("YOLO_REPLICAS_PER_GPU"):
@@ -116,4 +129,5 @@ def _apply_env_overrides(cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def output_rtsp_url(base: str, stream_index_one_based: int, suffix: str) -> str:
+    """Generate the output RTSP URL."""
     return f"{base}{stream_index_one_based}{suffix}"

@@ -1,4 +1,6 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -165,3 +167,5 @@ frontend/dist/
 
 # Deprecated config location (moved to frontend/)
 config/nginx/
+compliance/
+scanoss.json

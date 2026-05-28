@@ -1,4 +1,6 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 """Async batch event writer for crowd_counts and crowd_alerts tables."""
 
@@ -39,7 +41,15 @@ class EventPersistence:
         self._lock = asyncio.Lock()
         self._pending_tasks: Set[asyncio.Task] = set()
 
-    def submit_count(self, density_result, *, city: str = "", lat: float = 0.0, lon: float = 0.0, fps: float = 0.0) -> None:
+    def submit_count(
+        self,
+        density_result,
+        *,
+        city: str = "",
+        lat: float = 0.0,
+        lon: float = 0.0,
+        fps: float = 0.0
+    ) -> None:
         """Buffer a crowd count record for batch insertion.
 
         Args:
@@ -73,6 +83,7 @@ class EventPersistence:
             self._pending_tasks.add(task)
             task.add_done_callback(self._pending_tasks.discard)
 
+       
     def submit_alert(self, alert) -> None:
         """Buffer an alert for batch insertion.
 

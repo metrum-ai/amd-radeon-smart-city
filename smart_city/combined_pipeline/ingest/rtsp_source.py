@@ -1,10 +1,19 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
+
+"""
+RTSP source for the combined pipeline.
+"""
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
+import sys
 import threading
+from collections.abc import Iterator
 from typing import Optional
 
 import gi
@@ -16,6 +25,22 @@ from gi.repository import Gst
 logger = logging.getLogger(__name__)
 
 _gst_child_ready = False
+SOFTWARE_DECODER = "avdec_h264 direct-rendering=false"
+
+
+@contextlib.contextmanager
+def _suppress_native_stderr() -> Iterator[None]:
+    """Silence native VA-API/libdrm stderr noise during known-safe probes."""
+    sys.stderr.flush()
+    saved_stderr = os.dup(2)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, 2)
+        yield
+    finally:
+        os.dup2(saved_stderr, 2)
+        os.close(saved_stderr)
+        os.close(devnull)
 
 
 def init_gst_in_child() -> None:
@@ -46,38 +71,43 @@ def _set_vaapi_device(device: str) -> None:
     Sets both LIBVA_DRM_DEVICE (new drivers) and DISPLAY/DRI_PRIME as fallback.
     """
     os.environ["LIBVA_DRM_DEVICE"] = device
+    os.environ["GST_VAAPI_DRM_DEVICE"] = device
     # Some older libva builds read LIBVA_DEVICE_DRIVER_NAME instead; harmless to set.
     os.environ.setdefault("LIBVA_DRIVER_NAME", os.environ.get("LIBVA_DRIVER_NAME", "radeonsi"))
+    os.environ.pop("LIBVA_DRIVERS_PATH", None)
+
+
+def is_invalid_decoded_frame(frame: np.ndarray) -> bool:
+    """Return whether a decoded RGB frame is unusable for YOLO inference."""
+    if frame.size == 0:
+        return True
+    return int(frame.max()) <= 2 and float(frame.mean()) < 1.0
 
 
 def pick_decoder(*, decode_mode: str, gpu_id: int, vaapi_device: str | None = None) -> str:
     """Return the best available H.264 decoder element for this process.
 
     Preference order when decode_mode == 'hardware':
-      1. vah264dec with explicit device-path (VA-API new, best device isolation)
-      2. vaapih264dec with GST_VAAPI_DRM_DEVICE (legacy VA-API)
+      1. vaapih264dec with GST_VAAPI_DRM_DEVICE (validated on this stack)
+      2. vah264dec (new VA plugin, guarded by first-frame validation)
       3. avdec_h264 (software fallback)
 
     vaapi_device: DRM render node path (e.g. '/dev/dri/renderD129').
-                  When set with vah264dec, uses the device-path property directly
-                  in the pipeline string — no env var needed, fully isolated.
+                  Exported through VA-API environment variables before plugin init.
     """
     if decode_mode != "hardware":
-        return "avdec_h264 direct-rendering=false"
+        return SOFTWARE_DECODER
 
     if vaapi_device:
         _set_vaapi_device(vaapi_device)
 
-    if _gst_element_exists("vah264dec"):
-        # Use explicit device-path property to pin to the correct render node.
-        # This is the safest isolation method — no env var inheritance issues.
-        if vaapi_device:
-            return f"vah264dec device-path={vaapi_device}"
-        return "vah264dec"
-    if _gst_element_exists("vaapih264dec"):
-        return "vaapih264dec"
+    with _suppress_native_stderr():
+        if _gst_element_exists("vaapih264dec"):
+            return "vaapih264dec low-latency=true"
+        if _gst_element_exists("vah264dec"):
+            return "vah264dec"
     logger.warning("No VA-API H264 decoder available, falling back to software")
-    return "avdec_h264 direct-rendering=false"
+    return SOFTWARE_DECODER
 
 
 def build_rtsp_pipeline(
@@ -115,20 +145,35 @@ class RtspSource:
         self._appsink = None
         self._watcher: threading.Thread | None = None
         self._stop = threading.Event()
+        self._pending_frame: np.ndarray | None = None
+
+    def _start_software_fallback(self) -> None:
+        if self._pipeline is not None:
+            self._pipeline.set_state(Gst.State.NULL)
+        self.decoder = SOFTWARE_DECODER
+        pipeline_str = build_rtsp_pipeline(
+            self.rtsp_url, self.decoder, self.width, self.height
+        )
+        self._pipeline = Gst.parse_launch(pipeline_str)
+        self._appsink = self._pipeline.get_by_name("sink")
+        ret = self._pipeline.set_state(Gst.State.PLAYING)
+        if ret == Gst.StateChangeReturn.FAILURE:
+            raise RuntimeError(f"RTSP source failed (sw fallback): {self.rtsp_url}")
 
     def start(self) -> None:
         init_gst_in_child()
         pipeline_str = build_rtsp_pipeline(self.rtsp_url, self.decoder, self.width, self.height)
         logger.info("Starting pipeline: %s", pipeline_str[:120])
         try:
-            self._pipeline = Gst.parse_launch(pipeline_str)
+            with self._native_stderr_context():
+                self._pipeline = Gst.parse_launch(pipeline_str)
         except Exception as exc:
-            if self.decoder != "avdec_h264 direct-rendering=false":
+            if self.decoder != SOFTWARE_DECODER:
                 logger.warning(
                     "Failed to create pipeline with %s (%s), retrying with software decode",
                     self.decoder, exc,
                 )
-                self.decoder = "avdec_h264 direct-rendering=false"
+                self.decoder = SOFTWARE_DECODER
                 pipeline_str = build_rtsp_pipeline(
                     self.rtsp_url, self.decoder, self.width, self.height
                 )
@@ -136,26 +181,43 @@ class RtspSource:
             else:
                 raise
         self._appsink = self._pipeline.get_by_name("sink")
-        ret = self._pipeline.set_state(Gst.State.PLAYING)
+        with self._native_stderr_context():
+            ret = self._pipeline.set_state(Gst.State.PLAYING)
         if ret == Gst.StateChangeReturn.FAILURE:
-            if self.decoder != "avdec_h264 direct-rendering=false":
+            if self.decoder != SOFTWARE_DECODER:
                 logger.warning(
                     "Hardware pipeline failed to start, falling back to software decode"
                 )
-                self._pipeline.set_state(Gst.State.NULL)
-                self.decoder = "avdec_h264 direct-rendering=false"
-                pipeline_str = build_rtsp_pipeline(
-                    self.rtsp_url, self.decoder, self.width, self.height
-                )
-                self._pipeline = Gst.parse_launch(pipeline_str)
-                self._appsink = self._pipeline.get_by_name("sink")
-                ret = self._pipeline.set_state(Gst.State.PLAYING)
-                if ret == Gst.StateChangeReturn.FAILURE:
-                    raise RuntimeError(f"RTSP source failed (sw fallback): {self.rtsp_url}")
+                self._start_software_fallback()
             else:
                 raise RuntimeError(f"RTSP source failed: {self.rtsp_url}")
+        if self.decoder != SOFTWARE_DECODER:
+            try:
+                frame = self._pull_frame(timeout_seconds=15.0)
+            except TimeoutError:
+                logger.warning(
+                    "Hardware decoder %s did not produce a validation frame; "
+                    "falling back to software decode for %s",
+                    self.decoder, self.rtsp_url,
+                )
+                self._start_software_fallback()
+                frame = None
+            if frame is not None and is_invalid_decoded_frame(frame):
+                logger.warning(
+                    "Hardware decoder %s produced an invalid first frame; "
+                    "falling back to software decode for %s",
+                    self.decoder, self.rtsp_url,
+                )
+                self._start_software_fallback()
+            elif frame is not None:
+                self._pending_frame = frame
         self._watcher = threading.Thread(target=self._watch_bus, daemon=True)
         self._watcher.start()
+
+    def _native_stderr_context(self) -> contextlib.AbstractContextManager[None]:
+        if self.decoder == SOFTWARE_DECODER:
+            return contextlib.nullcontext()
+        return _suppress_native_stderr()
 
     def _watch_bus(self) -> None:
         assert self._pipeline is not None
@@ -172,7 +234,7 @@ class RtspSource:
             self.error = f"{err.message} ({dbg or 'no debug'})"
             self._stop.set()
 
-    def read(self, timeout_seconds: float = 5.0) -> np.ndarray:
+    def _pull_frame(self, timeout_seconds: float = 5.0) -> np.ndarray:
         if self._appsink is None:
             raise RuntimeError("appsink not ready")
         timeout_ns = int(timeout_seconds * Gst.SECOND)
@@ -193,6 +255,16 @@ class RtspSource:
             return np.ndarray(shape=(h, w, 3), dtype=np.uint8, buffer=mapped.data).copy()
         finally:
             buf.unmap(mapped)
+
+    def read(self, timeout_seconds: float = 5.0) -> np.ndarray:
+        if self._pending_frame is not None:
+            frame = self._pending_frame
+            self._pending_frame = None
+            return frame
+        frame = self._pull_frame(timeout_seconds)
+        if self.decoder != SOFTWARE_DECODER and is_invalid_decoded_frame(frame):
+            raise RuntimeError(f"hardware decoder produced invalid frame: {self.rtsp_url}")
+        return frame
 
     def stop(self) -> None:
         self._stop.set()

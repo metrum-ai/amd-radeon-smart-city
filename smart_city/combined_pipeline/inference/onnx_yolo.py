@@ -1,4 +1,10 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
+
+"""
+ONNX YOLO for the combined pipeline.
+"""
 
 from __future__ import annotations
 
@@ -25,6 +31,7 @@ def create_session(
     path = str(Path(model_path).resolve())
 
     def _build() -> ort.InferenceSession:
+        """Build the MIGraphX ORT session."""
         return ort.InferenceSession(
             path,
             providers=[("MIGraphXExecutionProvider", {"device_id": device_id})],
@@ -56,6 +63,7 @@ def warmup_session(
     infer_h: int,
     batch_sizes: list[int],
 ) -> None:
+    """Warmup the MIGraphX ORT session."""
     for bs in batch_sizes:
         x = np.zeros((bs, 3, infer_h, infer_w), dtype=dtype)
         session.run(None, {input_name: x})

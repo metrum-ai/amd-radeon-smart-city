@@ -1,4 +1,10 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
+
+"""
+YOLO server for the combined pipeline.
+"""
 
 from __future__ import annotations
 
@@ -7,14 +13,13 @@ import os
 import queue
 import sys
 import time
-import zlib
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import Event, Queue
 from multiprocessing.synchronize import Lock
 from pathlib import Path
 
-import cv2
 import numpy as np
+import onnxruntime as ort
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
@@ -22,6 +27,16 @@ if str(_REPO_ROOT) not in sys.path:
 
 from combined_pipeline.ipc.frame_store import attach_frame_store
 from combined_pipeline.ipc.messages import Detection, InferJob, InferResult, result_to_payload
+from combined_pipeline.inference.onnx_yolo import (
+    create_session,
+    frame_to_infer_plane,
+    warmup_session,
+)
+from combined_pipeline.inference.postprocess import (
+    decode_detect_topk,
+    decode_seg_topk,
+    decode_yolo_detect_batch,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +60,6 @@ def _install_migraphx_hook(gpu_id: int, migraphx_options: dict | None = None) ->
         migraphx_int8_use_native_calibration_table
     """
     try:
-        import onnxruntime as ort
         if "MIGraphXExecutionProvider" not in ort.get_available_providers():
             logger.warning("MIGraphXExecutionProvider not available")
             return
@@ -75,111 +89,7 @@ def _install_migraphx_hook(gpu_id: int, migraphx_options: dict | None = None) ->
 
 
 # ---------------------------------------------------------------------------
-# Mask encoding helper (Ultralytics backend only)
-# ---------------------------------------------------------------------------
-
-def _encode_mask(
-    mask_float: np.ndarray,
-    x1: float, y1: float, x2: float, y2: float,
-    full_w: int, full_h: int,
-) -> bytes | None:
-    if mask_float.shape[1] != full_w or mask_float.shape[0] != full_h:
-        mask_float = cv2.resize(mask_float, (full_w, full_h), interpolation=cv2.INTER_LINEAR)
-    bx1, by1 = max(0, int(x1)), max(0, int(y1))
-    bx2, by2 = min(full_w, int(x2) + 1), min(full_h, int(y2) + 1)
-    if bx2 <= bx1 or by2 <= by1:
-        return None
-    binary = (mask_float[by1:by2, bx1:bx2] > 0.5).astype(np.uint8)
-    if not binary.any():
-        return None
-    return zlib.compress(binary.tobytes(), level=1)
-
-
-# ---------------------------------------------------------------------------
-# Ultralytics backend
-# ---------------------------------------------------------------------------
-
-def _run_ultralytics(
-    gpu_id: int,
-    model_path: str,
-    infer_w: int,
-    infer_h: int,
-    full_w: int,
-    full_h: int,
-    store,
-    in_queue: Queue,
-    result_queues: list[Queue],
-    stop_event: Event,
-    ready_event: Event,
-    compile_lock: Lock,
-    batch_size: int,
-    batch_timeout_ms: float,
-    conf_threshold: float,
-    iou_threshold: float,
-    max_detections: int,
-    warmup_batch_sizes: list[int],
-    migraphx_options: dict | None = None,
-) -> None:
-    _install_migraphx_hook(gpu_id, migraphx_options)
-    from ultralytics import YOLO  # noqa: PLC0415
-
-    with compile_lock:
-        model = YOLO(model_path)
-        if not model_path.endswith(".onnx"):
-            model.to(f"cuda:{gpu_id}")
-        logger.info("YOLOServer gpu=%d warming up (ultralytics, imgsz=%d)...", gpu_id, infer_w)
-        dummy = np.zeros((infer_h, infer_w, 3), dtype=np.uint8)
-        for bs in warmup_batch_sizes:
-            model.predict([dummy] * bs, imgsz=infer_w, verbose=False,
-                          conf=conf_threshold, iou=iou_threshold, classes=_KEEP_CLASSES)
-        logger.info("YOLOServer gpu=%d warmup complete", gpu_id)
-
-    ready_event.set()
-    timeout_s = max(batch_timeout_ms / 1000.0, 0.001)
-    pending: list[InferJob] = []
-    deadline: float | None = None
-    _fps_frames = 0
-    _fps_batches = 0
-    _fps_t0 = time.monotonic()
-
-    def flush_batch(jobs: list[InferJob]) -> None:
-        nonlocal _fps_frames, _fps_batches, _fps_t0
-        frames = [store.full_view(j.full_slot).copy() for j in jobs]
-        results = model.predict(frames, imgsz=infer_w, conf=conf_threshold,
-                                iou=iou_threshold, classes=_KEEP_CLASSES,
-                                verbose=False, max_det=max_detections)
-        for job, result in zip(jobs, results):
-            dets: list[Detection] = []
-            if result.boxes is not None and len(result.boxes):
-                boxes_xyxy = result.boxes.xyxy.cpu().numpy()
-                cls_ids = result.boxes.cls.cpu().numpy().astype(int)
-                confs = result.boxes.conf.cpu().numpy()
-                masks_data = result.masks.data.cpu().numpy() if result.masks is not None else None
-                for i in range(len(result.boxes)):
-                    x1, y1, x2, y2 = boxes_xyxy[i]
-                    mb: bytes | None = None
-                    if masks_data is not None:
-                        mb = _encode_mask(masks_data[i], x1, y1, x2, y2, full_w, full_h)
-                    dets.append(Detection(x1=float(x1), y1=float(y1), x2=float(x2), y2=float(y2),
-                                          class_id=int(cls_ids[i]), score=float(confs[i]), mask_bytes=mb))
-            r = InferResult(stream_id=job.stream_id, seq=job.seq, full_slot=job.full_slot,
-                            infer_slot=job.infer_slot, width=job.width, height=job.height,
-                            detections=dets, count=len(dets), ts_ns=job.ts_ns)
-            result_queues[job.stream_id].put(result_to_payload(r))
-
-        _fps_frames += len(jobs)
-        _fps_batches += 1
-        elapsed = time.monotonic() - _fps_t0
-        if elapsed >= 10.0:
-            logger.info("YOLOServer gpu=%d: %.1f FPS (%.1f frames/batch avg) [ultralytics]",
-                        gpu_id, _fps_frames / elapsed, _fps_frames / max(_fps_batches, 1))
-            _fps_frames = 0; _fps_batches = 0; _fps_t0 = time.monotonic()
-
-    _run_loop(in_queue, stop_event, pending, deadline, timeout_s, batch_size, flush_batch)
-
-
-# ---------------------------------------------------------------------------
-# Raw ONNX backend — bypasses all Ultralytics overhead
+# Raw ONNX backend
 # ---------------------------------------------------------------------------
 
 def _run_raw_onnx(
@@ -204,13 +114,8 @@ def _run_raw_onnx(
     infer_dtype: np.dtype,
     migraphx_options: dict | None = None,
 ) -> None:
+    """Run the YOLO server."""
     _install_migraphx_hook(gpu_id, migraphx_options)
-    from combined_pipeline.inference.onnx_yolo import create_session, warmup_session, frame_to_infer_plane  # noqa: PLC0415
-    from combined_pipeline.inference.postprocess import (  # noqa: PLC0415
-        decode_yolo_detect_batch,
-        decode_detect_topk,
-        decode_seg_topk,
-    )
 
     session, input_name, _mw, _mh, dtype = create_session(model_path, device_id=gpu_id, compile_lock=compile_lock)
     logger.info("YOLOServer gpu=%d warming up (raw_onnx, imgsz=%d)...", gpu_id, infer_w)
@@ -291,11 +196,13 @@ def _run_raw_onnx(
         )
 
     def _copy_chunk(chunk: list[tuple[int, int]]) -> None:
+        """Copy a chunk."""
         # chunk: list of (batch_buf_index, infer_slot)
         for bi, slot in chunk:
             np.copyto(batch_buf[bi], store.infer_view(slot))
 
     def flush_batch(jobs: list[InferJob]) -> None:
+        """Flush a batch."""
         nonlocal _fps_frames, _fps_batches, _fps_t0
         nonlocal _prof_pre, _prof_run, _prof_dec, _prof_put
         active = len(jobs)
@@ -382,6 +289,7 @@ def _run_loop(
     batch_size: int,
     flush_batch,
 ) -> None:
+    """Run the loop."""
     try:
         while not stop_event.is_set():
             try:
@@ -432,9 +340,10 @@ def run_yolo_server(
     iou_threshold: float,
     max_detections: int,
     warmup_batch_sizes: list[int],
-    backend: str = "ultralytics",
+    backend: str = "raw_onnx",
     migraphx_options: dict | None = None,
 ) -> None:
+    """Run the YOLO server."""
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
     logger.info("YOLOServer gpu=%d starting (backend=%s)", gpu_id, backend)
@@ -460,7 +369,7 @@ def run_yolo_server(
         if backend in ("raw_onnx", "onnx"):
             _run_raw_onnx(**common, infer_dtype=infer_dtype)
         else:
-            _run_ultralytics(**common)
+            raise ValueError(f"Unknown YOLO backend: {backend!r}. Only 'raw_onnx'/'onnx' are supported.")
     finally:
         store.close()
         logger.info("YOLOServer gpu=%d stopped", gpu_id)

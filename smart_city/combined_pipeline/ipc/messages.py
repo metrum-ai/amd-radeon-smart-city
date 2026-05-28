@@ -1,4 +1,10 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
+
+"""
+IPC messages for the combined pipeline.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +14,7 @@ from typing import Any
 
 @dataclass(slots=True)
 class InferJob:
+    """Infer job."""
     stream_id: int
     seq: int
     full_slot: int
@@ -19,6 +26,7 @@ class InferJob:
 
 @dataclass(slots=True)
 class Detection:
+    """Detection."""
     x1: float
     y1: float
     x2: float
@@ -30,6 +38,7 @@ class Detection:
 
 @dataclass(slots=True)
 class InferResult:
+    """Infer result."""
     stream_id: int
     seq: int
     full_slot: int
@@ -42,6 +51,7 @@ class InferResult:
 
 
 def result_to_payload(r: InferResult) -> dict[str, Any]:
+    """Convert an InferResult to a payload."""
     return {
         "stream_id": r.stream_id,
         "seq": r.seq,
@@ -67,6 +77,7 @@ def result_to_payload(r: InferResult) -> dict[str, Any]:
 
 
 def payload_to_result(p: dict[str, Any]) -> InferResult:
+    """Convert a payload to an InferResult."""
     dets = [
         Detection(
             x1=float(x["x1"]),

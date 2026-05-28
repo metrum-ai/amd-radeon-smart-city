@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 # =============================================================================
 # Smart City Public Safety Platform — Setup & Launch
@@ -44,7 +46,7 @@ source "$SCRIPT_DIR/scripts/setup_runtime_defaults.sh"
 # Hard requirements and runtime defaults
 MIN_REQUIRED_GPUS=2
 HSA_VERSION="12.0.1"   # RDNA4 / R9700
-DISK_MIN_GB=50
+DISK_MIN_GB=40
 RAM_MIN_GB=32
 MODEL_EXPORT_VENV_DIR="${MODEL_EXPORT_VENV_DIR:-.venv-model-export}"
 MODEL_EXPORT_PYTHON="$(model_export_python_path "$MODEL_EXPORT_VENV_DIR")"
@@ -137,6 +139,12 @@ fi
 SELECTED_GPU_PROFILE="$(select_gpu_profile "$DETECTED_GPU_COUNT")"
 SELECTED_COMPOSE_FILE="$(profile_compose_file "$SELECTED_GPU_PROFILE")"
 
+# Detect which physical GPUs are currently free (lowest utilisation) and
+# select the best N for this profile.  Falls back to 0..N-1 when rocm-smi
+# is unavailable or returns no usable data.
+GPUS_NEEDED=$([ "$SELECTED_GPU_PROFILE" = "4gpu" ] && echo 4 || echo 2)
+SELECTED_GPU_IDS="$(detect_free_gpus "$GPUS_NEEDED" "$DETECTED_GPU_COUNT")"
+
 if [ "$DETECTED_GPU_COUNT" -lt "$MIN_REQUIRED_GPUS" ]; then
     error "${DETECTED_GPU_COUNT} AMD GPU(s) detected — minimum ${MIN_REQUIRED_GPUS} required"
     error "  GPU 0 runs YOLO; GPU 1 runs DM-Count + Lemonade LLM."
@@ -167,6 +175,8 @@ else
             ok "${DETECTED_GPU_COUNT} AMD GPU(s): ${GPU_NAMES} — selecting 2-GPU profile"
         fi
     fi
+    # Show which physical GPU IDs were chosen (freest by utilisation).
+    ok "Selected GPUs: $(echo "$SELECTED_GPU_IDS" | tr ' ' ',') (freest by utilization)"
 fi
 
 # --- ROCm device nodes ---
@@ -202,6 +212,28 @@ fi
 # Prefer physical cores so SMT siblings do not double the stream-count default.
 CPU_CORE_COUNT="$(detect_cpu_core_count)"
 ok "${CPU_CORE_COUNT} physical CPU core(s) detected"
+
+# --- Kernel / decode-backend detection ---
+# 2-GPU profiles always use libav software decode: GPU 1 is already shared by
+# DM-Count + Lemonade, so VA-API VCN decode has no stable headroom there.
+# 4-GPU profiles can use VA-API hardware decode on kernel 6.17+, using the
+# legacy vaapih264dec path validated for non-black RGB frames. The user can
+# still force software on 4-GPU by exporting DECODE_MODE=software before
+# running setup.sh. ENCODE_MODE is intentionally NOT auto-flipped — it stays on
+# libx264 software regardless of kernel.
+KERNEL_RELEASE="$(uname -r 2>/dev/null || echo unknown)"
+EXPLICIT_DECODE_MODE="${DECODE_MODE:-}"
+SELECTED_DECODE_MODE="$(select_decode_mode "$KERNEL_RELEASE" "$EXPLICIT_DECODE_MODE" "$SELECTED_GPU_PROFILE")"
+if [ "$SELECTED_GPU_PROFILE" = "2gpu" ]; then
+    ok "Profile 2gpu — forcing software decode; hardware decode is reserved for 4-GPU profile"
+elif [ -n "$EXPLICIT_DECODE_MODE" ] && [ "$EXPLICIT_DECODE_MODE" != "auto" ]; then
+    ok "Kernel ${KERNEL_RELEASE} — DECODE_MODE forced to '${SELECTED_DECODE_MODE}' via env"
+elif [ "$SELECTED_DECODE_MODE" = "hardware" ]; then
+    ok "Kernel ${KERNEL_RELEASE} (≥ 6.17) — enabling VA-API hardware decode"
+else
+    warn "Kernel ${KERNEL_RELEASE} (< 6.17) — falling back to software decode"
+    warn "  Upgrade to kernel 6.17+ for stable amdgpu VA-API on RDNA4 GPUs."
+fi
 
 echo ""
 if [ "$PREREQ_FAIL" -ne 0 ]; then
@@ -327,47 +359,47 @@ if [ "$SKIP_ENV" -eq 0 ]; then
 
     echo ""
 
-    # --- MinIO credentials ---
-    echo -e "  ${BOLD}MinIO object store${NC}"
+    # --- RustFS credentials ---
+    echo -e "  ${BOLD}RustFS object store${NC}"
     while true; do
-        read -rp "  MinIO access key: " _minio_access_key || _minio_access_key=""
-        if [ -z "${_minio_access_key:-}" ]; then
+        read -rp "  RustFS access key: " _rustfs_access_key || _rustfs_access_key=""
+        if [ -z "${_rustfs_access_key:-}" ]; then
             error "  Access key cannot be empty."
             continue
         fi
-        if [ "$_minio_access_key" = "minioadmin" ] || [ "$_minio_access_key" = "changeme" ]; then
-            warn "  '$_minio_access_key' is a default placeholder — please pick something unique."
+        if [ "$_rustfs_access_key" = "rustfsadmin" ] || [ "$_rustfs_access_key" = "changeme" ]; then
+            warn "  '$_rustfs_access_key' is a default placeholder — please pick something unique."
             continue
         fi
         break
     done
 
     while true; do
-        read -rsp "  MinIO secret key (will not be echoed): " _minio_secret_key
+        read -rsp "  RustFS secret key (will not be echoed): " _rustfs_secret_key
         echo ""
-        if [ -z "${_minio_secret_key:-}" ]; then
+        if [ -z "${_rustfs_secret_key:-}" ]; then
             error "  Secret key cannot be empty."
             continue
         fi
-        if [ "${#_minio_secret_key}" -lt 8 ]; then
+        if [ "${#_rustfs_secret_key}" -lt 8 ]; then
             error "  Secret key must be at least 8 characters."
             continue
         fi
-        if [ "$_minio_secret_key" = "minioadmin" ] || [ "$_minio_secret_key" = "changeme" ] || [ "$_minio_secret_key" = "password" ]; then
-            warn "  '$_minio_secret_key' is a default placeholder — please pick something stronger."
+        if [ "$_rustfs_secret_key" = "rustfsadmin" ] || [ "$_rustfs_secret_key" = "changeme" ] || [ "$_rustfs_secret_key" = "password" ]; then
+            warn "  '$_rustfs_secret_key' is a default placeholder — please pick something stronger."
             continue
         fi
-        read -rsp "  Confirm secret key: " _minio_secret_key2
+        read -rsp "  Confirm secret key: " _rustfs_secret_key2
         echo ""
-        if [ "$_minio_secret_key" != "$_minio_secret_key2" ]; then
+        if [ "$_rustfs_secret_key" != "$_rustfs_secret_key2" ]; then
             error "  Secret keys do not match — try again."
             continue
         fi
         break
     done
 
-    sed -i "s|^MINIO_ACCESS_KEY=.*|MINIO_ACCESS_KEY=${_minio_access_key}|" .env
-    sed -i "s|^MINIO_SECRET_KEY=.*|MINIO_SECRET_KEY=${_minio_secret_key}|" .env
+    sed -i "s|^RUSTFS_ACCESS_KEY=.*|RUSTFS_ACCESS_KEY=${_rustfs_access_key}|" .env
+    sed -i "s|^RUSTFS_SECRET_KEY=.*|RUSTFS_SECRET_KEY=${_rustfs_secret_key}|" .env
 
     echo ""
 
@@ -399,8 +431,10 @@ info "Applying ${SELECTED_GPU_PROFILE} runtime profile to .env..."
 while IFS= read -r assignment; do
     [ -n "$assignment" ] || continue
     add_or_replace "${assignment%%=*}" "${assignment#*=}"
-done < <(profile_env_assignments "$SELECTED_GPU_PROFILE")
+done < <(profile_env_assignments "$SELECTED_GPU_PROFILE" "$SELECTED_GPU_IDS")
 add_or_replace "HSA_OVERRIDE_GFX_VERSION" "${HSA_VERSION}"
+add_or_replace "VIDEO_GID" "$(host_group_gid video 44)"
+add_or_replace "RENDER_GID" "$(host_group_gid render 109)"
 
 # Shell environment values win. Existing .env values win only when the user kept
 # that file; freshly scaffolded .env values are treated as template defaults.
@@ -410,14 +444,23 @@ SELECTED_STREAM_COUNT="$(select_stream_count "$CPU_CORE_COUNT" "$STREAM_OVERRIDE
 SELECTED_DENSITY_DISPLAY_STREAMS="$(select_density_display_streams "$SELECTED_STREAM_COUNT" "$DENSITY_OVERRIDE")"
 add_or_replace "STREAM_COUNT" "${SELECTED_STREAM_COUNT}"
 add_or_replace "DENSITY_DISPLAY_STREAMS" "${SELECTED_DENSITY_DISPLAY_STREAMS}"
+add_or_replace "DECODE_MODE" "${SELECTED_DECODE_MODE}"
 
 ok "Profile ${SELECTED_GPU_PROFILE}: compose override ${SELECTED_COMPOSE_FILE}"
+# Map the selected physical GPU IDs to role names for the status line.
+# Role indices are relative to ROCR_VISIBLE_DEVICES; resolve them back to
+# the physical IDs we chose so the message reflects reality on this host.
+read -ra _sel_gpus <<< "$SELECTED_GPU_IDS"
 if [ "$SELECTED_GPU_PROFILE" = "4gpu" ]; then
-    ok "GPU 0 → DM-Count, GPU 1-2 → YOLO, GPU 3 → Lemonade"
+    # Relative: 0→DM-Count, 1+2→YOLO, 3→Lemonade
+    ok "GPU ${_sel_gpus[0]:-0} → DM-Count, GPU ${_sel_gpus[1]:-1},${_sel_gpus[2]:-2} → YOLO, GPU ${_sel_gpus[3]:-3} → Lemonade"
 else
-    ok "GPU 0 → YOLO, GPU 1 → DM-Count + Lemonade"
+    # Relative: 0→YOLO, 1→DM-Count + Lemonade
+    ok "GPU ${_sel_gpus[0]:-0} → YOLO, GPU ${_sel_gpus[1]:-1} → DM-Count + Lemonade"
 fi
 ok "STREAM_COUNT=${SELECTED_STREAM_COUNT}, DENSITY_DISPLAY_STREAMS=${SELECTED_DENSITY_DISPLAY_STREAMS} (${CPU_CORE_COUNT} physical cores)"
+ok "DECODE_MODE=${SELECTED_DECODE_MODE} (kernel ${KERNEL_RELEASE}); ENCODE_MODE=software"
+ok "GPU device groups: VIDEO_GID=$(host_group_gid video 44), RENDER_GID=$(host_group_gid render 109)"
 echo ""
 
 # --- WebRTC ICE candidate hosts ---
@@ -567,14 +610,15 @@ hr
 ok "All services started."
 hr
 echo ""
-echo "  GPU layout:"
+echo "  GPU layout (physical IDs):"
+# Resolve physical GPU IDs for the summary.  _sel_gpus[] is already set above.
 if [ "$SELECTED_GPU_PROFILE" = "4gpu" ]; then
-    echo "    GPU 0      →  DM-Count (pipeline)"
-    echo "    GPU 1,2    →  YOLO (pipeline, 2 replicas/GPU)"
-    echo "    GPU 3      →  Lemonade (LLM)"
+    echo "    GPU ${_sel_gpus[0]:-0}      →  DM-Count (pipeline)"
+    echo "    GPU ${_sel_gpus[1]:-1},${_sel_gpus[2]:-2}    →  YOLO (pipeline, 2 replicas/GPU)"
+    echo "    GPU ${_sel_gpus[3]:-3}      →  Lemonade (LLM)"
 else
-    echo "    GPU 0      →  YOLO (pipeline, 2 replicas)"
-    echo "    GPU 1      →  DM-Count (pipeline) + Lemonade (LLM)"
+    echo "    GPU ${_sel_gpus[0]:-0}      →  YOLO (pipeline, 2 replicas)"
+    echo "    GPU ${_sel_gpus[1]:-1}      →  DM-Count (pipeline) + Lemonade (LLM)"
 fi
 echo "    profile    →  ${SELECTED_GPU_PROFILE} (${SELECTED_COMPOSE_FILE})"
 echo "    streams    →  ${SELECTED_STREAM_COUNT} total, ${SELECTED_DENSITY_DISPLAY_STREAMS} density display"

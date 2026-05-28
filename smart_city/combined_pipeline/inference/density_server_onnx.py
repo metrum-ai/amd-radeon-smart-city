@@ -1,4 +1,6 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 """
 ONNX-based DM-Count density server — runs on GPU via MIGraphXExecutionProvider.
@@ -118,6 +120,7 @@ def run_density_server_onnx(
     startup_delay_s: float = 90.0,  # wait for YOLO+workers to stabilise before compiling VGG19
     migraphx_options: dict | None = None,
 ) -> None:
+    """Run the density server ONNX."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
@@ -242,6 +245,7 @@ def _collect_batch(
     timeout_s: float,
     stop_event: Event,
 ) -> list[tuple[int, np.ndarray, int]]:
+    """Collect a batch."""
     batch: list[tuple[int, np.ndarray, int]] = []
     deadline = time.monotonic() + timeout_s
     while len(batch) < max_batch:

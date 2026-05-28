@@ -1,7 +1,8 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 # Production config: yolo26s-detect (small), raw_onnx backend, FP16, 384x384
-# Benchmarked result: ~1,400 FPS total (2 replicas × 700 FPS), p50=42ms, p95=50ms
 #
 # ----------------------------------------------------------------------------
 # What lives here vs. what lives in .env
@@ -25,7 +26,20 @@ streams:
   gpu_count: 1               # multi-GPU stream sharding factor; perf-tuned
 
 ingest:
-  decode_mode: "software"
+  # Default to VA-API hardware decode. setup.sh flips this to "software" when
+  # the host kernel is older than 6.17 (where amdgpu VA-API for RDNA4 isn't
+  # mature enough). Per-stream automatic fallback to software is also wired
+  # in orchestrator/pipeline.py if any individual hw pipeline fails to start.
+  decode_mode: "hardware"
+  # Which physical GPU's VCN decoder VA-API binds to. The compose profile
+  # overrides this so VA-API never lands on a YOLO compute GPU:
+  #   2-gpu profile → HW_DECODE_VAAPI_GPU=1 (YOLO on GPU 0)
+  #   4-gpu profile → HW_DECODE_VAAPI_GPU=0 (YOLO on GPUs 1,2)
+  hw_decode_vaapi_gpu: 1
+  # Stagger VA-API context creation across stream workers (in ms). Without
+  # this, 50+ workers initialise VA-API simultaneously and the driver hangs.
+  # 200 ms per stream means a 50-stream startup spreads init over ~10 s.
+  hw_decode_stagger_ms: 200
 
 yolo:
   model_path: "/app/models/yolo26s-384-dynamic.onnx"

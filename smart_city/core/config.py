@@ -1,4 +1,6 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 """Configuration loader and validated settings for the Smart City platform.
 
@@ -173,7 +175,7 @@ class StorageConfig(BaseModel):
 class APIConfig(BaseModel):
     """FastAPI server config."""
 
-    host: str = "0.0.0.0"  # nosec B104
+    host: str = "127.0.0.1"
     port: int = 8000
     cors_origins: List[str] = Field(
         default_factory=lambda: [

@@ -1,4 +1,6 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 """Document ingestion pipeline for RAG knowledge base.
 
@@ -7,10 +9,8 @@ each chunk, and upserts them into the Milvus vector store.
 Called once during application startup.
 """
 
-import fnmatch
 import json
 import logging
-import os
 from pathlib import Path
 from typing import List
 

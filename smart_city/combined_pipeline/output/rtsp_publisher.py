@@ -1,4 +1,10 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
+
+"""
+RTSP publisher for the combined pipeline.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +20,8 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+_WRITE_STALL_TIMEOUT_S = 5.0
+
 # Module-level cache so probing happens once per process, not once per stream
 _vaapi_encode_available: Optional[bool] = None
 _vaapi_lock = threading.Lock()
@@ -25,6 +33,7 @@ DEFAULT_VAAPI_ENCODE_DEVICE = "/dev/dri/renderD128"
 
 
 def _vaapi_device_path() -> str:
+    """Get the VAAPI device path."""
     return os.environ.get("VAAPI_ENCODE_DEVICE", DEFAULT_VAAPI_ENCODE_DEVICE)
 
 
@@ -72,6 +81,7 @@ def _build_ffmpeg_cmd(
     fps: int,
     use_hw: bool,
 ) -> list[str]:
+    """Build the FFmpeg command."""
     key_interval = max(1, fps)
     common = [
         "ffmpeg", "-y",
@@ -151,6 +161,7 @@ class RtspPublisher:
         encode_mode: str,
         use_hw: bool | None = None,  # pre-computed by orchestrator; None = probe locally
     ) -> None:
+        """Initialize the RTSP publisher."""
         self.rtsp_url = rtsp_url
         if use_hw is not None:
             self._use_hw = use_hw
@@ -169,6 +180,7 @@ class RtspPublisher:
             stderr=subprocess.PIPE,
         )
         self._write_error: Exception | None = None
+        self._write_started_at: float | None = None
         self._frames: "queue.Queue[bytes | None]" = queue.Queue(maxsize=1)
         self._writer = threading.Thread(target=self._drain_frames, daemon=True)
         self._writer.start()
@@ -191,6 +203,7 @@ class RtspPublisher:
                 )
 
     def _drain_frames(self) -> None:
+        """Drain frames from the queue to the FFmpeg process."""
         while True:
             payload = self._frames.get()
             if payload is None:
@@ -198,16 +211,29 @@ class RtspPublisher:
             if self._proc is None or self._proc.stdin is None:
                 return
             try:
+                self._write_started_at = time.monotonic()
                 self._proc.stdin.write(payload)
+                self._proc.stdin.flush()
             except Exception as exc:
                 self._write_error = exc
                 return
+            finally:
+                self._write_started_at = None
 
     def write(self, frame: np.ndarray) -> None:
+        """Write a frame to the RTSP publisher."""
         if self._proc is None or self._proc.stdin is None:
             raise RuntimeError("publisher not started")
+        returncode = self._proc.poll()
+        if returncode is not None:
+            raise RuntimeError(f"publisher exited with code {returncode}")
         if self._write_error is not None:
             raise RuntimeError("publisher write failed") from self._write_error
+        if (
+            self._write_started_at is not None
+            and time.monotonic() - self._write_started_at > _WRITE_STALL_TIMEOUT_S
+        ):
+            raise RuntimeError("publisher write stalled")
         payload = np.ascontiguousarray(frame).tobytes()
         # Drop the oldest frame if FFmpeg can't keep up
         try:
@@ -220,6 +246,7 @@ class RtspPublisher:
             self._frames.put_nowait(payload)
 
     def stop(self) -> None:
+        """Stop the RTSP publisher."""
         if self._proc is None:
             return
         try:

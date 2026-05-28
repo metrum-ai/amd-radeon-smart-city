@@ -1,4 +1,6 @@
-// Created by Metrum AI for AMD
+// Copyright Advanced Micro Devices, Inc.
+//
+// SPDX-License-Identifier: MIT
 
 import { memo, useCallback, useMemo, useEffect, useRef, useState } from "react";
 import * as echarts from "echarts";

@@ -1,4 +1,6 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 # ============================================================
 # Smart City Public Safety Platform
@@ -61,17 +63,21 @@ services:
     logging: *default-logging
     restart: unless-stopped
 
-  minio:
-    image: minio/minio:RELEASE.2024-01-18T22-51-28Z
-    container_name: smartcity_minio
+  rustfs:
+    image: rustfs/rustfs:1.0.0-beta.3
+    container_name: smartcity_rustfs
     environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set in .env}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set in .env}
-    command: minio server /minio_data --console-address ":9001"
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:?RUSTFS_ACCESS_KEY must be set in .env}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?RUSTFS_SECRET_KEY must be set in .env}
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_CONSOLE_ADDRESS: 0.0.0.0:9001
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_REGION: us-east-1
+      RUSTFS_VOLUMES: /data
     volumes:
-      - minio_data:/minio_data
+      - rustfs_data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
       interval: 30s
       timeout: 20s
       retries: 3
@@ -87,15 +93,17 @@ services:
     command: ["milvus", "run", "standalone"]
     environment:
       ETCD_ENDPOINTS: etcd:2379
-      MINIO_ADDRESS: minio:9000
-      MINIO_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set in .env}
-      MINIO_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set in .env}
+      MINIO_ADDRESS: rustfs:9000
+      MINIO_ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY:?RUSTFS_ACCESS_KEY must be set in .env}
+      MINIO_SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY:?RUSTFS_SECRET_KEY must be set in .env}
+      MINIO_REGION: us-east-1
+      MINIO_USE_SSL: "false"
     volumes:
       - milvus_data:/var/lib/milvus
     depends_on:
       etcd:
         condition: service_healthy
-      minio:
+      rustfs:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
@@ -130,7 +138,7 @@ services:
 
 
   lemonade:
-    image: ghcr.io/lemonade-sdk/lemonade-server:latest
+    image: ghcr.io/lemonade-sdk/lemonade-server:v10.2.0
     container_name: smartcity_lemonade
     entrypoint: ["/bin/sh", "/entrypoint.sh"]
     volumes:
@@ -149,8 +157,8 @@ services:
       - /dev/kfd:/dev/kfd
       - /dev/dri:/dev/dri
     group_add:
-      - "44"    # video group (GID 44)
-      - "109"   # render group (GID 109)
+      - "${VIDEO_GID:-44}"
+      - "${RENDER_GID:-109}"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:13305/live"]
       interval: 30s
@@ -209,8 +217,8 @@ services:
       - /dev/kfd:/dev/kfd
       - /dev/dri:/dev/dri
     group_add:
-      - video
-      - render
+      - "${VIDEO_GID:-44}"
+      - "${RENDER_GID:-109}"
     security_opt:
       - no-new-privileges:true
     read_only: false
@@ -243,8 +251,8 @@ services:
     security_opt:
       - seccomp:unconfined
     group_add:
-      - video
-      - render
+      - "${VIDEO_GID:-44}"
+      - "${RENDER_GID:-109}"
     logging: *default-logging
 
   node-exporter:
@@ -290,7 +298,7 @@ services:
   # RTSP input publisher — loops test video, publishes to MediaMTX
   # ------------------------------------------------------------
   mediamtx:
-    image: bluenviron/mediamtx:latest
+    image: bluenviron/mediamtx:1.18.2
     container_name: smartcity_mediamtx
     # No ports exposed directly — all traffic routes through the frontend nginx:
     #   HTTP/WHEP signaling  → nginx /webrtc/ → mediamtx:8889
@@ -350,23 +358,34 @@ services:
       - /dev/kfd:/dev/kfd
       - /dev/dri:/dev/dri
     group_add:
-      - video
-      - render
+      - "${VIDEO_GID:-44}"
+      - "${RENDER_GID:-109}"
     security_opt:
       - seccomp=unconfined
+    # 150+ streams blow past the default 1024 open file descriptors quickly.
+    # Bump nofile so VA-API DRM handles + shared memory FDs don't get capped.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     volumes:
       # Shared volume for pipeline stats JSON (pipeline writes, api reads)
       - pipeline_stats:/pipeline_stats
     environment:
       HSA_OVERRIDE_GFX_VERSION: "12.0.1"
-      # Disable VA-API by default; this release keeps software encode.
-      LIBVA_DRIVER_NAME: "null"
-      LIBVA_DRIVERS_PATH: "/dev/null"
       ROCR_VISIBLE_DEVICES: "0,1"
       HSA_VISIBLE_DEVICES: "0,1"
       STREAM_COUNT: "${STREAM_COUNT:-25}"
       DENSITY_DISPLAY_STREAMS: "${DENSITY_DISPLAY_STREAMS:-25}"
       DENSITY_EVERY_N_FRAMES: "${DENSITY_EVERY_N_FRAMES:-1}"
+      # Decode is VA-API-by-default once kernel >= 6.17. setup.sh auto-picks
+      # this based on `uname -r` and writes the resolved value to .env.
+      # Encode stays on libx264 software in this release; flip ENCODE_MODE
+      # to "hardware" only if you have profiled VCN headroom for it.
+      DECODE_MODE: "${DECODE_MODE:-hardware}"
+      HW_DECODE_VAAPI_GPU: "${HW_DECODE_VAAPI_GPU:-1}"
+      HW_DECODE_MAX_STREAMS: "${HW_DECODE_MAX_STREAMS:-}"
+      HW_DECODE_STAGGER_MS: "${HW_DECODE_STAGGER_MS:-200}"
       ENCODE_MODE: "${ENCODE_MODE:-software}"
       PAIRED_OUTPUT_FPS: "${PAIRED_OUTPUT_FPS:-30}"
       PIPELINE_STATS_FILE: "/pipeline_stats/pipeline_stats.json"
@@ -425,7 +444,7 @@ services:
 volumes:
   timescaledb_data:    # TimescaleDB persistent storage
   etcd_data:           # Milvus etcd metadata
-  minio_data:          # Milvus object storage
+  rustfs_data:         # Milvus object storage
   milvus_data:         # Milvus vector index data
   tei_model_cache:     # TEI embedding model weights (downloaded once)
   prometheus_data:     # Prometheus metrics history

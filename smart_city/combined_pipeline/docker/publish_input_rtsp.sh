@@ -1,7 +1,28 @@
 #!/usr/bin/env bash
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 set -euo pipefail
+
+READY_FILE="${READY_FILE:-/tmp/rtsp-publisher-ready}"
+
+healthcheck() {
+  test -f "$READY_FILE"
+
+  for cmd in /proc/[0-9]*/comm; do
+    if [ "$(cat "$cmd" 2>/dev/null || true)" = "ffmpeg" ]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+if [ "${1:-run}" = "healthcheck" ]; then
+  healthcheck
+  exit $?
+fi
 
 : "${STREAM_COUNT:?STREAM_COUNT is required}"
 VIDEO_DIR="${VIDEO_DIR:-/videos}"
@@ -15,6 +36,7 @@ if [ "${#VIDEO_FILES[@]}" -eq 0 ]; then
 fi
 
 echo "[publish_input_rtsp] publishing ${STREAM_COUNT} streams from ${#VIDEO_FILES[@]} video file(s)"
+rm -f "$READY_FILE"
 
 PIDS=()
 cleanup() {
@@ -53,5 +75,17 @@ for ((i=1; i<=STREAM_COUNT; i++)); do
   PIDS+=("$!")
   echo "[publish_input_rtsp] cam${i} <- $(basename "$file")"
 done
+
+echo "[publish_input_rtsp] waiting for RTSP paths to become readable"
+for ((i=1; i<=STREAM_COUNT; i++)); do
+  target="${INPUT_BASE_RTSP}${i}"
+  until ffprobe -v error -rtsp_transport tcp \
+    -select_streams v:0 -show_entries stream=codec_type \
+    -of csv=p=0 "$target" >/dev/null 2>&1; do
+    sleep 1
+  done
+done
+touch "$READY_FILE"
+echo "[publish_input_rtsp] all ${STREAM_COUNT} RTSP streams are readable"
 
 wait

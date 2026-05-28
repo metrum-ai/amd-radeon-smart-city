@@ -1,4 +1,6 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 """Report generation and retrieval endpoints.
 
@@ -29,7 +31,7 @@ import math
 import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -38,6 +40,15 @@ import httpx
 import yaml
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
+
+from smart_city.core.stream_allocation import apply_city_allocation
+from smart_city.llm.pdf_renderer import markdown_to_pdf
+
+try:
+    from openai import OpenAIError
+except ImportError:
+    class OpenAIError(RuntimeError):  # type: ignore[no-redef]
+        """Fallback when openai is not installed in lint-only environments."""
 
 logger = logging.getLogger(__name__)
 
@@ -86,9 +97,6 @@ def _load_location_index() -> Dict[str, dict]:
     global _location_cache  # pylint: disable=global-statement
     if _location_cache is not None:
         return _location_cache
-    from smart_city.core.stream_allocation import (  # noqa: PLC0415
-        apply_city_allocation,
-    )
 
     try:
         with open(_STREAMS_METADATA_FILE, encoding="utf-8") as fh:
@@ -262,8 +270,6 @@ async def _run_report_job(
 
         generated_at = datetime.now(tz=timezone.utc)
 
-        from smart_city.llm.pdf_renderer import markdown_to_pdf  # noqa: PLC0415
-
         pdf_bytes = markdown_to_pdf(
             markdown_text=content,
             zone_id=zone_id,
@@ -309,20 +315,18 @@ async def _run_report_job(
     except (
         asyncpg.PostgresError,
         httpx.HTTPError,
+        AttributeError,
+        KeyError,
+        OpenAIError,
         OSError,
         RuntimeError,
+        TypeError,
         ValueError,
         json.JSONDecodeError,
     ) as exc:
         logger.error(
             "Report job %s failed: %s", report_id, exc, exc_info=True
         )
-        jobs[report_id].update({"status": "failed", "error": str(exc)})
-    except Exception as exc:  # pylint: disable=broad-except
-        # Final safety net for any unanticipated failure mode in the
-        # background task — without this the asyncio task would die
-        # silently and the job would be stuck in "processing" forever.
-        logger.exception("Report job %s crashed unexpectedly", report_id)
         jobs[report_id].update({"status": "failed", "error": str(exc)})
 
 
@@ -360,8 +364,6 @@ async def generate_report(
     effective_hours: int = body.hours
     if body.from_date and body.to_date:
         try:
-            from datetime import date  # noqa: PLC0415
-
             dt_from = date.fromisoformat(body.from_date)
             dt_to = date.fromisoformat(body.to_date)
             today = date.today()

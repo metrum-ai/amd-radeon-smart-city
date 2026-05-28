@@ -1,4 +1,6 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 """Synthetic crowd-event data generation for the simulator.
 
@@ -8,10 +10,8 @@ simulator runner to seed TimescaleDB with realistic crowd counts.
 
 import math
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
-
 
 @dataclass
 class ZoneSpec:

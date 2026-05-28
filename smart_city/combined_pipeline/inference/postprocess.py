@@ -1,4 +1,10 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
+
+"""
+Postprocess for the combined pipeline.
+"""
 
 from __future__ import annotations
 
@@ -25,6 +31,7 @@ COCO_NAMES: dict[int, str] = {
 
 
 def _sigmoid(x: np.ndarray) -> np.ndarray:
+    """Sigmoid function."""
     x = np.clip(x.astype(np.float32), -60.0, 60.0)
     return 1.0 / (1.0 + np.exp(-x))
 
@@ -67,6 +74,7 @@ def nms_xyxy(boxes: np.ndarray, scores: np.ndarray, iou_threshold: float) -> lis
 
 
 def num_classes_from_features(n_features: int) -> int:
+    """Get the number of classes from features."""
     nc = n_features - 4 - 32
     if nc < 1:
         raise ValueError(f"Invalid feature count {n_features} for YOLO-seg head")

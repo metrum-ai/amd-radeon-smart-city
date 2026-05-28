@@ -1,4 +1,10 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
+
+"""
+Main entry point for the combined pipeline.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +17,10 @@ from pathlib import Path
 _REPO = Path(__file__).resolve().parent.parent
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
+
+from combined_pipeline.control.startup import load_pipeline_config
+from combined_pipeline.inference.export_dm_count import export_dm_count_onnx
+from combined_pipeline.orchestrator.pipeline import run_pipeline
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,12 +39,22 @@ def _export_dm_count_onnx(cfg: dict) -> None:
     if not density_cfg.get("enabled", True):
         return
 
-    weights = density_cfg.get("weights_path")
-    if not weights or not Path(weights).exists():
-        logger.warning("DM-Count weights not found at %s — density disabled", weights)
+    onnx_path = density_cfg.get("onnx_path", "/app/models/dm_count.onnx")
+    if onnx_path and Path(onnx_path).exists():
+        logger.info("DM-Count ONNX already exists at %s, skipping export", onnx_path)
+        density_cfg["onnx_path"] = onnx_path
         return
 
-    onnx_path = density_cfg.get("onnx_path", "/app/models/dm_count.onnx")
+    weights = density_cfg.get("weights_path")
+    if not weights or not Path(weights).exists():
+        logger.warning(
+            "DM-Count weights not found at %s and ONNX not found at %s — density disabled",
+            weights,
+            onnx_path,
+        )
+        cfg["density"]["enabled"] = False
+        return
+
     batch_size = int(density_cfg.get("batch_size", 4))
     infer_w = int(density_cfg.get("infer_width", 320))
     infer_h = int(density_cfg.get("infer_height", 240))
@@ -43,7 +63,6 @@ def _export_dm_count_onnx(cfg: dict) -> None:
     for key in ("ROCR_VISIBLE_DEVICES", "HSA_VISIBLE_DEVICES"):
         os.environ.pop(key, None)
 
-    from combined_pipeline.inference.export_dm_count import export_dm_count_onnx
     ok = export_dm_count_onnx(weights, onnx_path, batch_size, infer_w, infer_h)
     if not ok:
         logger.error("DM-Count ONNX export failed — density will be disabled")
@@ -53,6 +72,7 @@ def _export_dm_count_onnx(cfg: dict) -> None:
 
 
 def main() -> None:
+    """Main entry point for the combined pipeline."""
     parser = argparse.ArgumentParser(
         description="Combined YOLO + DM-Count pipeline with WebRTC output"
     )
@@ -63,14 +83,13 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    from combined_pipeline.control.startup import load_pipeline_config
     cfg = load_pipeline_config(args.config)
 
     _export_dm_count_onnx(cfg)
 
-    from combined_pipeline.orchestrator.pipeline import run_pipeline
     run_pipeline(cfg=cfg)
 
 
 if __name__ == "__main__":
+    """Main entry point for the combined pipeline."""
     main()

@@ -1,4 +1,6 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 """Crowd analytics sub-package."""
 from smart_city.analytics.crowd.density_analyzer import (

@@ -1,4 +1,6 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 """Simulator lifecycle mode management.
 
@@ -7,10 +9,12 @@ simulated + real), or fully replaced by live sensor data.
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
+
+import asyncpg
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +124,13 @@ class ModeManager:
                 return await self._query_status(
                     self._db_pool, status, now
                 )
-        except Exception as exc:  # pylint: disable=broad-except
+        except (
+            AttributeError,
+            asyncpg.PostgresError,
+            OSError,
+            RuntimeError,
+            TypeError,
+        ) as exc:
             logger.warning("ModeManager DB query failed: %s", exc)
             return status
 

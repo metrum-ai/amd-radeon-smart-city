@@ -36,7 +36,7 @@ This solution delivers a **unified, on‑premise crowd intelligence system** tha
 
 | Feature                                | Description                                                                                                                                              |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **GPU‑Accelerated Video Intelligence** | 50 RTSP streams with YOLOv26 + DM‑Count on 2× or 4× AMD Radeon R9700S (ROCm + MIGraphX). Sub‑100 ms P95 latency from video → detection → alert → dashboard |
+| **GPU‑Accelerated Video Intelligence** | 50 RTSP streams with YOLOv26 + DM‑Count on 2× or 4× AMD Radeon R9700S (ROCm + MIGraphX). |
 | **GAIA Agentic Intelligence**          | AMD GAIA framework orchestrates Investigator (TimescaleDB) + SOP Advisor (Milvus RAG) for context‑aware incident analysis with policy‑grounded summaries |
 | **Real‑Time Alerting System**          | Automatic alerts on threshold breach with zero delay; live‑stream auto‑popups with heatmaps — no operator intervention needed                            |
 | **On‑Prem ROCm‑Optimized LLM Serving** | `Qwen3-30B-A3B-GGUF` via Lemonade Server for local report generation, retrieving policy + history for grounded, auditable outputs                        |
@@ -63,6 +63,7 @@ This solution was deployed and tested on the following hardware:
 | Component            | Version                  |
 | -------------------- | ------------------------ |
 | **Operating System** | Ubuntu 22.04 LTS or 24.04 LTS |
+| **Linux Kernel**     | 6.17.0-29-generic        |
 | **Docker Engine**    | 24.0+                    |
 | **Docker Compose**   | v2.20+                   |
 | **ROCm**             | 7.2.0                    |
@@ -90,14 +91,14 @@ rocm-smi
 
 ### 3. Stage demo videos (optional)
 
-The repository includes a sample `videos/` directory that the `rtsp-input-publisher` loops onto MediaMTX so the pipeline has live RTSP traffic. To use your own clips:
+The repository includes a sample `videos/` directory that the `rtsp-input-publisher` loops onto MediaMTX so the pipeline has RTSP traffic. To use your own clips:
 
 ```bash
 cp /path/to/your/clips/*.mp4 videos/
 ```
 
 > [!NOTE]
-> Video filenames are matched to streams in `config/streams_metadata.yaml`. The publisher exposes `STREAM_COUNT` independent feeds at `rtsp://mediamtx:8554/cam{N}`.
+> The publisher sorts `videos/*.mp4` alphabetically and assigns them to `STREAM_COUNT` streams round-robin.
 
 ---
 
@@ -128,7 +129,7 @@ docker compose up -d --build
 
 Either path brings up:
 
-- **Infrastructure**: TimescaleDB, etcd, MinIO, Milvus, Prometheus, MediaMTX
+- **Infrastructure**: TimescaleDB, etcd, RustFS, Milvus, Prometheus, MediaMTX
 - **AI services**: TEI embeddings, Lemonade LLM
 - **Application**: Analytics pipeline, RTSP publisher, FastAPI, React frontend
 
@@ -352,11 +353,17 @@ Full reference of every variable understood by the stack:
 | **[Design](docs/design.md)**          | Architecture, workflow, agents, data flow, schemas, ports, env vars |
 
 
----
-
 > [!NOTE]  
 >
 > The policy documents located in `smart_city/docs/policy` and the example videos in `videos` are simulated and illustrative data intended solely for demonstration and testing purposes. These materials do not represent actual organization policies, procedures, or real event footage and should not be relied upon for operational, legal, or real-world decision-making.  
 >
 > All provided files are supplied "as-is" without warranties. The creators are not responsible for any outcomes or damages resulting from use of these materials outside their intended demonstration context.
+
+---
+
+## Disclaimer (Performance)
+
+Performance varies by hardware and software configurations, including testing conditions, system settings, application complexity, the quantity of data, batch sizes, software versions, libraries used, and other factors. Any performance or benchmarking results referenced in this repository are provided for informational purposes only and should not be interpreted as a guarantee of actual performance.
+
+---
 

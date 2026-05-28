@@ -1,4 +1,10 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
+
+"""
+Frame store for the combined pipeline.
+"""
 
 from __future__ import annotations
 
@@ -23,6 +29,7 @@ class FrameStore:
         full_shm: SharedMemory | None = None,
         infer_shm: SharedMemory | None = None,
     ) -> None:
+        """Initialize the FrameStore."""
         self.num_slots = num_slots
         self.full_height = full_height
         self.full_width = full_width
@@ -60,23 +67,29 @@ class FrameStore:
 
     @property
     def full_shm_name(self) -> str:
+        """Get the full shared memory name."""
         return self.full_shm.name
 
     @property
     def infer_shm_name(self) -> str:
+        """Get the infer shared memory name."""
         return self.infer_shm.name
 
     def full_view(self, slot: int) -> np.ndarray:
+        """Get the full view of the frame store."""
         return self._full_arr[slot]
 
     def infer_view(self, slot: int) -> np.ndarray:
+        """Get the infer view of the frame store."""
         return self._infer_arr[slot]
 
     def close(self) -> None:
+        """Close the frame store."""
         self.full_shm.close()
         self.infer_shm.close()
 
     def unlink(self) -> None:
+        """Unlink the frame store."""
         if self._owns_full:
             try:
                 self.full_shm.unlink()
@@ -100,6 +113,7 @@ def attach_frame_store(
     infer_width: int,
     infer_dtype: np.dtype,
 ) -> FrameStore:
+    """Attach the frame store."""
     full_shm = SharedMemory(name=full_shm_name)
     infer_shm = SharedMemory(name=infer_shm_name)
     return FrameStore(
@@ -126,4 +140,5 @@ def make_slot_free_queues(stream_count: int, slots_per_stream: int) -> list[mp.Q
 
 
 def global_slot(stream_id: int, slots_per_stream: int, local_slot: int) -> int:
+    """Get the global slot."""
     return stream_id * slots_per_stream + local_slot

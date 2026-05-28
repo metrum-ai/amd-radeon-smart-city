@@ -1,34 +1,62 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 """Application startup: initialise all subsystems and attach to app.state."""
 
 import asyncio
+import base64
 import json
 import logging
 import os
+import random
+from dataclasses import dataclass as _dc
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 import asyncpg
+import cv2
 import httpx
+import numpy as np
 import yaml
 from fastapi import FastAPI
+
+from smart_city.analytics.alerts.threshold_engine import ThresholdAlertEngine
+from smart_city.analytics.crowd.density_analyzer import CrowdDensityResult
+from smart_city.analytics.crowd.pattern_analyzer import HistoricalPatternAnalyzer
+from smart_city.api.websocket import WebSocketHub
+from smart_city.core.stream_allocation import apply_city_allocation
+from smart_city.llm.doc_ingestor import ingest_documents
+from smart_city.llm.embedder import Embedder
+from smart_city.llm.report_generator import ReportGenerator
+from smart_city.llm.vector_store import VectorStoreClient
+from smart_city.observability.metrics import (
+    ACTIVE_STREAMS,
+    ALERTS_FIRED,
+    CROWD_DENSITY_GAUGE,
+    STREAM_FPS,
+    TOTAL_CROWD_COUNT,
+)
+from smart_city.simulator.data_gen import (
+    ZoneSpec,
+    _crowd_count,
+    _density_score,
+)
+from smart_city.simulator.mode_manager import ModeManager
+from smart_city.simulator.runner import _run_seed
+from smart_city.storage.event_persistence import EventPersistence
+from smart_city.storage.schemas import DDL
 
 logger = logging.getLogger(__name__)
 
 # pymilvus is an optional dependency in some deployments; fall back to a
 # placeholder so this module always imports.
-try:  # pragma: no cover - import shim
+try:
     from pymilvus.exceptions import MilvusException  # type: ignore[import-not-found]
-except ImportError:  # pragma: no cover - import shim
+except ImportError:
     class MilvusException(Exception):  # type: ignore[no-redef]
         """Fallback used when pymilvus is unavailable."""
-
-# ---------------------------------------------------------------------------
-# Default zone specs — loaded from streams_metadata.yaml at import time
-# ---------------------------------------------------------------------------
-from dataclasses import dataclass as _dc  # noqa: E402
-
 
 @_dc
 class _ZoneSpec:
@@ -50,16 +78,11 @@ def _build_default_zones() -> list:
     Raises:
         RuntimeError: If streams_metadata.yaml cannot be loaded.
     """
-    import yaml as _yaml  # noqa: PLC0415
-    from smart_city.core.stream_allocation import (  # noqa: PLC0415
-        apply_city_allocation,
-    )
-
     _meta_path = os.path.normpath(os.path.join(
         os.path.dirname(__file__), "..", "config", "streams_metadata.yaml"
     ))
     with open(_meta_path, encoding="utf-8") as _f:
-        _cfg = _yaml.safe_load(_f)
+        _cfg = yaml.safe_load(_f)
     zones = []
     for s in apply_city_allocation(list(_cfg.get("streams", []))):
         sid = int(s["id"])
@@ -99,15 +122,6 @@ class _DR:  # noqa: N801
     severity: str
 
 
-from smart_city.observability.metrics import (  # noqa: E402
-    ACTIVE_STREAMS,
-    ALERTS_FIRED,
-    CROWD_DENSITY_GAUGE,
-    STREAM_FPS,
-    TOTAL_CROWD_COUNT,
-)
-
-
 def _load_streams_metadata(config_path: str) -> dict[int, dict]:
     """Load per-stream location/threshold metadata from streams_metadata.yaml.
 
@@ -120,10 +134,6 @@ def _load_streams_metadata(config_path: str) -> dict[int, dict]:
     unique cities instead of all landing in whichever city happens to be
     listed first.
     """
-    from smart_city.core.stream_allocation import (  # noqa: PLC0415
-        apply_city_allocation,
-    )
-
     path = Path(config_path)
     if not path.exists():
         logger.warning("streams_metadata.yaml not found at %s — using empty metadata", path)
@@ -201,15 +211,6 @@ async def _realtime_push_loop(app: FastAPI) -> None:
     synthetic data when the pipeline is not yet running, so the dashboard
     always shows something useful during startup / demo mode.
     """
-    import random
-    from datetime import datetime, timezone
-
-    from smart_city.simulator.data_gen import (
-        _crowd_count,
-        _density_score,
-        ZoneSpec,
-    )
-
     # Path to the JSON stats file written by the pipeline.
     # Matches the Docker volume mount point and the pipeline container's default.
     stats_file = os.environ.get("PIPELINE_STATS_FILE", "/pipeline_stats/pipeline_stats.json")
@@ -282,14 +283,19 @@ async def _realtime_push_loop(app: FastAPI) -> None:
                         if density_count_raw is not None
                         else None
                     )
+                    # det_count is the raw instantaneous YOLO bounding-box count
+                    # for a single processed frame.  count is the EMA-smoothed
+                    # DM-Count density estimate and is the reliable person count
+                    # for crowded scenes — use it as person_count throughout.
                     det_count = int(stats.get("det_count", count))
+                    person_count = count  # DM-Count smoothed estimate
                     fps = float(stats.get("fps", 0.0))
                     latency_ms = float(stats.get("latency_ms", 0.0))
                     status = str(stats.get("status", "LIVE"))
                     paired_published = bool(stats.get("paired_published", False))
 
-                    density = min(1.0, det_count / max(threshold, 1))
-                    severity = "CRITICAL" if det_count >= threshold else "SAFE"
+                    density = min(1.0, person_count / max(threshold, 1))
+                    severity = "CRITICAL" if person_count >= threshold else "SAFE"
                     # Use zone_id from metadata if present; fall back to
                     # cam{sid}_main so live data matches the seeded history.
                     zone_id = cfg.get("zone_id") or f"cam{sid}_main"
@@ -303,7 +309,7 @@ async def _realtime_push_loop(app: FastAPI) -> None:
                         "zone_id": zone_id,
                         "zone_name": zone_name,
                         "zone_type": zone_type,
-                        "person_count": det_count,
+                        "person_count": person_count,
                         "density_score": round(density, 3),
                         "severity": severity,
                         "violation_type": (
@@ -322,7 +328,7 @@ async def _realtime_push_loop(app: FastAPI) -> None:
                         "zone_id": zone_id,
                         "zone_name": zone_name,
                         "zone_type": zone_type,
-                        "person_count": det_count,
+                        "person_count": person_count,
                         "density_score": round(density, 3),
                         "severity": severity,
                         "threshold": threshold,
@@ -374,15 +380,12 @@ async def _realtime_push_loop(app: FastAPI) -> None:
                             location_name=location_name,
                             lat=lat,
                             lon=lon,
-                            count=det_count,
+                            count=person_count,
                             severity=severity,
                         )
 
                     # Alert engine
                     if severity == "CRITICAL" and alert_engine is not None:
-                        from smart_city.analytics.crowd.density_analyzer import (  # noqa: PLC0415
-                            CrowdDensityResult,
-                        )
                         result = CrowdDensityResult(
                             stream_id=sid,
                             zone_id=zone_id,
@@ -479,9 +482,6 @@ async def _realtime_push_loop(app: FastAPI) -> None:
                         )
 
                     if severity == "CRITICAL" and alert_engine is not None:
-                        from smart_city.analytics.crowd.density_analyzer import (  # noqa: PLC0415
-                            CrowdDensityResult,
-                        )
                         result = CrowdDensityResult(
                             stream_id=zone.stream_id,
                             zone_id=zone.zone_id,
@@ -552,11 +552,6 @@ def _generate_density_heatmap(person_count: int, density_score: float,
     Returns:
         Base64-encoded JPEG string, or "" on error.
     """
-    import base64
-
-    import cv2
-    import numpy as np
-
     try:
         rng = np.random.default_rng(person_count % 1000)
         canvas = np.zeros((height, width), dtype=np.float32)
@@ -594,16 +589,14 @@ async def _heatmap_update_loop(app: FastAPI) -> None:
     broadcasts to any active WebSocket subscribers on the heatmap:{stream_id}
     channel.
     """
-    import asyncio as _asyncio
-
     while True:
-        await _asyncio.sleep(10)
+        await asyncio.sleep(10)
         try:
             density_cache: dict = getattr(app.state, "density_cache", {})
             heatmap_cache: dict = getattr(app.state, "heatmap_cache", {})
             ws_hub = getattr(app.state, "ws_hub", None)
 
-            loop = _asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             for stream_id, data in list(density_cache.items()):
                 count = int(data.get("person_count", 0))
                 density = float(data.get("density_score", 0.0))
@@ -688,8 +681,6 @@ async def init_app_state(app: FastAPI, config: Any) -> None:
     # ------------------------------------------------------------------
     db_pool = None
     try:
-        import asyncpg  # pylint: disable=import-outside-toplevel
-
         db_pool = await asyncpg.create_pool(
             dsn=config.storage.database_url,
             min_size=2,
@@ -702,8 +693,6 @@ async def init_app_state(app: FastAPI, config: Any) -> None:
         logger.info("TimescaleDB pool established.")
 
         # Apply DDL schema idempotently on every startup
-        from smart_city.storage.schemas import DDL  # pylint: disable=import-outside-toplevel
-
         async with db_pool.acquire() as _conn:
             for _stmt in DDL.split(";"):
                 _s = _stmt.strip()
@@ -741,10 +730,6 @@ async def init_app_state(app: FastAPI, config: Any) -> None:
     app.state.sim_retire_after_days = retire_after
     if db_pool is not None:
         try:
-            from smart_city.simulator.mode_manager import (  # pylint: disable=import-outside-toplevel
-                ModeManager,
-            )
-
             mgr = ModeManager(db_pool, retire_after_days=retire_after)
             status = await mgr.check_and_update()
             logger.info(
@@ -776,10 +761,6 @@ async def init_app_state(app: FastAPI, config: Any) -> None:
             """
             await asyncio.sleep(5)  # brief warm-up for the pool
             try:
-                from smart_city.simulator.runner import (  # pylint: disable=import-outside-toplevel
-                    _run_seed,
-                )
-
                 logger.info("Auto-seed: starting 2-month historical seed…")
                 await _run_seed(db_pool, retire_after)
                 logger.info("Auto-seed: complete.")
@@ -802,10 +783,6 @@ async def init_app_state(app: FastAPI, config: Any) -> None:
     # ------------------------------------------------------------------
     # 2. WebSocket hub
     # ------------------------------------------------------------------
-    from smart_city.api.websocket import (  # pylint: disable=import-outside-toplevel
-        WebSocketHub,
-    )
-
     ws_hub = WebSocketHub()
     app.state.ws_hub = ws_hub
 
@@ -816,16 +793,6 @@ async def init_app_state(app: FastAPI, config: Any) -> None:
     # until all documents are embedded and stored in Milvus.  Milvus /
     # embedder service readiness is retried for up to 120 s so that
     # Docker-Compose dependency ordering is respected gracefully.
-    from smart_city.llm.doc_ingestor import (  # pylint: disable=import-outside-toplevel
-        ingest_documents,
-    )
-    from smart_city.llm.embedder import (  # pylint: disable=import-outside-toplevel
-        Embedder,
-    )
-    from smart_city.llm.vector_store import (  # pylint: disable=import-outside-toplevel
-        VectorStoreClient,
-    )
-
     milvus_host = config.rag.milvus_host
     milvus_port = config.rag.milvus_port
     embed_base_url = getattr(config.rag, "embed_base_url", "") or None
@@ -857,8 +824,9 @@ async def init_app_state(app: FastAPI, config: Any) -> None:
             _rag_elapsed += _rag_retry_interval
 
     if vector_store is None:
-        raise RuntimeError(
-            f"Milvus not reachable after {_rag_ready_timeout}s — aborting startup."
+        logger.warning(
+            "Milvus not reachable after %ds — RAG/embeddings disabled.",
+            _rag_ready_timeout,
         )
 
     # --- Wait for embedder service ---
@@ -886,47 +854,50 @@ async def init_app_state(app: FastAPI, config: Any) -> None:
                 await asyncio.sleep(_rag_retry_interval)
                 _emb_elapsed += _rag_retry_interval
         else:
-            raise RuntimeError(
-                f"Embedder service not reachable after {_rag_ready_timeout}s"
-                " — aborting startup."
+            logger.warning(
+                "Embedder service not reachable after %ds — RAG/embeddings disabled.",
+                _rag_ready_timeout,
             )
+            embed_base_url = None
 
-    embedder = Embedder(
-        model_name=getattr(
-            config.rag, "embedding_model", "BAAI/bge-small-en-v1.5"
-        ),
-        base_url=embed_base_url,
-    )
+    if vector_store is not None:
+        embedder = Embedder(
+            model_name=getattr(
+                config.rag, "embedding_model", "BAAI/bge-small-en-v1.5"
+            ),
+            base_url=embed_base_url,
+        )
+    else:
+        embedder = None
 
-    # --- Blocking document ingestion (no try/except — must complete) ---
-    docs_path = getattr(config.rag, "docs_ingest_path", "/app/data/docs")
-    # Only index PDF/MD — plain-text duplicates produce NaN embeddings and
-    # inflate the collection with redundant chunks on every restart.
-    docs_glob = getattr(config.rag, "docs_glob", "**/*.md,**/*.pdf")
-    chunk_size = getattr(config.rag, "chunk_size", 500)
-    chunk_overlap = getattr(config.rag, "chunk_overlap", 50)
+    # --- Blocking document ingestion ---
+    if vector_store is not None:
+        docs_path = getattr(config.rag, "docs_ingest_path", "/app/data/docs")
+        # Only index PDF/MD — plain-text duplicates produce NaN embeddings and
+        # inflate the collection with redundant chunks on every restart.
+        docs_glob = getattr(config.rag, "docs_glob", "**/*.md,**/*.pdf")
+        chunk_size = getattr(config.rag, "chunk_size", 500)
+        chunk_overlap = getattr(config.rag, "chunk_overlap", 50)
 
-    # Drop and recreate the collection so each deployment starts from a clean
-    # slate — prevents duplicate chunks accumulating across restarts.
-    vector_store.drop_and_recreate()
+        # Drop and recreate the collection so each deployment starts from a clean
+        # slate — prevents duplicate chunks accumulating across restarts.
+        vector_store.drop_and_recreate()
 
-    logger.info("RAG document ingestion starting (blocking startup)…")
-    _n_chunks = await ingest_documents(
-        docs_ingest_path=docs_path,
-        docs_glob=docs_glob,
-        embedder=embedder,
-        vector_store=vector_store,
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-    )
-    logger.info("RAG document ingestion complete: %d chunks indexed.", _n_chunks)
+        logger.info("RAG document ingestion starting (blocking startup)…")
+        _n_chunks = await ingest_documents(
+            docs_ingest_path=docs_path,
+            docs_glob=docs_glob,
+            embedder=embedder,
+            vector_store=vector_store,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+        logger.info("RAG document ingestion complete: %d chunks indexed.", _n_chunks)
+    else:
+        logger.warning("Skipping RAG document ingestion — Milvus unavailable.")
 
     # --- Wire ReportGenerator (non-fatal: vLLM is optional) ---
     try:
-        from smart_city.llm.report_generator import (  # pylint: disable=import-outside-toplevel
-            ReportGenerator,
-        )
-
         vllm_url = config.llm.base_url
         model_name = getattr(config.llm, "model", "qwen")
         api_key = getattr(config.llm, "api_key", "")
@@ -959,10 +930,6 @@ async def init_app_state(app: FastAPI, config: Any) -> None:
     # ------------------------------------------------------------------
     event_persistence = None
     if db_pool is not None:
-        from smart_city.storage.event_persistence import (  # pylint: disable=import-outside-toplevel
-            EventPersistence,
-        )
-
         event_persistence = EventPersistence(db_pool)
         asyncio.create_task(event_persistence.run())
         logger.info("EventPersistence batch writer started.")
@@ -971,10 +938,6 @@ async def init_app_state(app: FastAPI, config: Any) -> None:
     # ------------------------------------------------------------------
     # 6. ThresholdAlertEngine wired to WebSocket hub + DB writer
     # ------------------------------------------------------------------
-    from smart_city.analytics.alerts.threshold_engine import (  # pylint: disable=import-outside-toplevel
-        ThresholdAlertEngine,
-    )
-
     alert_engine = ThresholdAlertEngine(cooldown_seconds=60.0)
 
     async def _on_alert(alert) -> None:
@@ -997,10 +960,6 @@ async def init_app_state(app: FastAPI, config: Any) -> None:
     # 6b. HistoricalPatternAnalyzer — runs on startup then every 6 h
     # ------------------------------------------------------------------
     if db_pool is not None:
-        from smart_city.analytics.crowd.pattern_analyzer import (  # pylint: disable=import-outside-toplevel
-            HistoricalPatternAnalyzer,
-        )
-
         pattern_analyzer = HistoricalPatternAnalyzer(db_pool)
         app.state.pattern_analyzer = pattern_analyzer
 

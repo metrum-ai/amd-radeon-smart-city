@@ -1,4 +1,6 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 system:
   # Set NUM_GPUS env var to match physical Radeon GPU count (1–8)

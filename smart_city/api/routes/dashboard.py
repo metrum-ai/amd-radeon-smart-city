@@ -1,4 +1,6 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 """Dashboard map data routes."""
 import logging
@@ -10,6 +12,8 @@ from typing import Any, Optional
 
 import yaml
 from fastapi import APIRouter, Request
+
+from smart_city.core.stream_allocation import apply_city_allocation
 
 logger = logging.getLogger(__name__)
 
@@ -98,10 +102,6 @@ def _tooltip_cfg() -> dict[str, Any]:
 @lru_cache(maxsize=1)
 def _load_stream_city_index() -> tuple[dict[str, str], dict[str, str]]:
     """Load zone->city and location->city mappings from stream metadata."""
-    from smart_city.core.stream_allocation import (  # noqa: PLC0415
-        apply_city_allocation,
-    )
-
     cfg_path = (
         Path(__file__).resolve().parents[2]
         / "config"
@@ -344,10 +344,6 @@ def _load_streams_metadata() -> dict[str, list[dict]]:
         Dict mapping city_id (e.g. ``austin_downtown``) to an ordered list
         of ``{zone_id, label}`` dicts loaded from streams_metadata.yaml.
     """
-    from smart_city.core.stream_allocation import (  # noqa: PLC0415
-        apply_city_allocation,
-    )
-
     try:
         with open(_STREAMS_META_FILE, encoding="utf-8") as fh:
             raw = yaml.safe_load(fh) or {}

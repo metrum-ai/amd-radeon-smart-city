@@ -1,0 +1,7 @@
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
+
+# Development-only dependencies (training / model export)
+# NOT for production deployment — ultralytics is AGPL-3.0 licensed.
+ultralytics==8.2.17

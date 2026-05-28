@@ -1,4 +1,6 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 """Coordinator for multi-agent incident investigation."""
 
@@ -6,13 +8,17 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import re
 from typing import Any, Optional
+
+import asyncpg
 
 from smart_city.llm.agents.base import TraceStep
 from smart_city.llm.agents.investigator import InvestigatorAgent
 from smart_city.llm.agents.sop_advisor import SOPAdvisorAgent
+from smart_city.llm.agents.tools import execute_tool
+from smart_city.llm.vector_store import MilvusException
 
 logger = logging.getLogger(__name__)
 
@@ -124,8 +130,23 @@ class OrchestratorAgent:
 
         if needs_fallback:
             logger.info(
-                "No tool results in trace; falling back to direct SQL summary."
+                "No tool results in trace; running investigator tools directly."
             )
+            direct_summary, direct_trace = await self._run_investigator_tools_direct(
+                zone_id=zone_id,
+                hours=hours,
+                db_pool=db_pool,
+                from_date=from_date,
+                to_date=to_date,
+            )
+            if direct_summary:
+                incident_summary = direct_summary
+                trace.extend(direct_trace)
+                needs_fallback = False
+                if on_trace_update:
+                    on_trace_update(list(trace))
+
+        if needs_fallback:
             incident_summary = await self._fallback_investigator_summary(
                 zone_id=zone_id,
                 hours=hours,
@@ -156,16 +177,35 @@ class OrchestratorAgent:
                 "No SOP policy matches found in RAG for this incident."
             )
 
+        trace.append(
+            TraceStep(
+                agent="SOPAdvisorAgent",
+                tool="search_sop_documents",
+                summary=(
+                    f"Retrieved {len(sop_hits)} SOP/policy chunks via RAG: "
+                    f"{', '.join(h['source'] for h in sop_hits[:4])}"
+                ),
+                timestamp=datetime.now(timezone.utc),
+                raw_result=json.dumps({"rows": sop_hits}),
+            )
+        )
+        if on_trace_update:
+            on_trace_update(list(trace))
+
+        compact_incident_summary = self._compact_agent_context(
+            incident_summary, max_chars=2600
+        )
+
         sop_input = (
             "Use the incident summary below and retrieve relevant SOP guidance.\n\n"
-            f"Incident summary:\n{incident_summary}\n\n"
+            f"Incident summary:\n{compact_incident_summary}\n\n"
             "Query for crowd-density response, escalation, privacy safeguards, "
             "and AI operations governance. Prioritize matches from TX-SCPS-POL "
             "documents and include citations for every recommendation. "
             "If no SOP evidence is found, output NO_SOP_FOUND exactly using "
             "the fallback format from your system instructions.\n\n"
             "Retrieved policy context:\n"
-            f"{self._format_sop_hits(sop_hits)}"
+            f"{self._compact_agent_context(self._format_sop_hits(sop_hits), 1800)}"
         )
         trace.append(
             TraceStep(
@@ -353,6 +393,84 @@ class OrchestratorAgent:
         return " ".join((value or "").split()).strip()
 
     @classmethod
+    def _compact_agent_context(cls, value: str, max_chars: int) -> str:
+        """Trim long evidence blocks before handing them back to the LLM."""
+        clean = (value or "").strip()
+        if len(clean) <= max_chars:
+            return clean
+        head_chars = max(1, int(max_chars * 0.72))
+        tail_chars = max(1, max_chars - head_chars - 120)
+        return (
+            clean[:head_chars].rstrip()
+            + "\n\n[... middle evidence compacted to fit LLM context ...]\n\n"
+            + clean[-tail_chars:].lstrip()
+        )
+
+    @classmethod
+    def _summarize_tool_json(cls, raw_result: str) -> str:
+        """Return a compact trace summary for JSON tool output."""
+        try:
+            payload = json.loads(raw_result)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return cls._clean_text(raw_result)[:220]
+        rows = payload.get("rows", []) if isinstance(payload, dict) else []
+        if isinstance(rows, list):
+            note = payload.get("note") if isinstance(payload, dict) else None
+            suffix = f"; {note}" if note else ""
+            return f"Retrieved {len(rows)} row(s){suffix}."
+        return cls._clean_text(raw_result)[:220]
+
+    async def _run_investigator_tools_direct(
+        self,
+        *,
+        zone_id: str,
+        hours: int,
+        db_pool: Optional[Any],
+        from_date: Optional[str],
+        to_date: Optional[str],
+    ) -> tuple[str, list[TraceStep]]:
+        """Run investigator data tools directly when GAIA returns no calls."""
+        if db_pool is None:
+            return "", []
+        args: dict[str, Any] = {"zone_id": zone_id, "hours": hours}
+        if from_date:
+            args["from_ts"] = from_date
+        if to_date:
+            args["to_ts"] = to_date
+
+        trace: list[TraceStep] = []
+        for tool_name in (
+            "get_zone_alerts",
+            "get_density_trends",
+            "get_historical_patterns",
+        ):
+            raw_result = await execute_tool(
+                tool_name=tool_name,
+                args=args,
+                db_pool=db_pool,
+                vector_store=None,
+                embedder=None,
+            )
+            trace.append(
+                TraceStep(
+                    agent="InvestigatorAgent",
+                    tool=tool_name,
+                    summary=self._summarize_tool_json(raw_result),
+                    timestamp=datetime.now(timezone.utc),
+                    raw_result=raw_result,
+                )
+            )
+
+        summary = await self._fallback_investigator_summary(
+            zone_id=zone_id,
+            hours=hours,
+            db_pool=db_pool,
+            from_date=from_date,
+            to_date=to_date,
+        )
+        return summary, trace
+
+    @classmethod
     def _sanitize_agent_summary(cls, text: str) -> str:
         """Strip GAIA wrapper text and keep the final answer body."""
         raw = (text or "").strip()
@@ -370,7 +488,11 @@ class OrchestratorAgent:
                 decoded = json.loads(f'"{escaped}"')
                 if decoded.strip():
                     raw = decoded.strip()
-            except Exception:  # pragma: no cover - defensive fallback
+            except (
+                AttributeError,
+                json.JSONDecodeError,
+                ValueError,
+            ):
                 pass
 
         message_match = re.search(
@@ -384,7 +506,11 @@ class OrchestratorAgent:
                 decoded = json.loads(f'"{escaped}"')
                 if decoded.strip():
                     raw = decoded.strip()
-            except Exception:  # pragma: no cover - defensive fallback
+            except (
+                AttributeError,
+                json.JSONDecodeError,
+                ValueError,
+            ):
                 pass
 
         # Remove common GAIA runtime wrappers/noise.
@@ -408,7 +534,12 @@ class OrchestratorAgent:
                         message = answer.get("message")
                         if isinstance(message, str) and message.strip():
                             return message.strip()
-            except Exception:  # pragma: no cover - defensive fallback
+            except (
+                AttributeError,
+                json.JSONDecodeError,
+                TypeError,
+                ValueError,
+            ):
                 # Not valid JSON but wrapped in braces — strip them.
                 raw = raw[1:-1].strip()
 
@@ -493,7 +624,7 @@ class OrchestratorAgent:
                 if isinstance(obj, dict):
                     payload = obj
                     break
-            except Exception:
+            except (json.JSONDecodeError, TypeError, ValueError):
                 pass
 
         if not payload and '"INCIDENT_FACTS"' in stripped:
@@ -764,7 +895,7 @@ class OrchestratorAgent:
             return []
 
         queries: list[str] = []
-        primary = incident_summary.strip()
+        primary = cls._compact_agent_context(incident_summary.strip(), 1200)
         if primary:
             queries.append(primary)
         queries.append(cls._SOP_FALLBACK_QUERY)
@@ -796,7 +927,14 @@ class OrchestratorAgent:
         try:
             q_emb = embedder.embed_one(query)
             raw_hits = vector_store.search(q_emb, top_k=20)
-        except Exception as exc:  # pylint: disable=broad-except
+        except (
+            KeyError,
+            MilvusException,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
             logger.warning("SOP retrieval failed: %s", exc)
             return []
 
@@ -811,7 +949,12 @@ class OrchestratorAgent:
                     json.loads(str(hit.get("metadata", "{}"))).get("source", "")
                 )
                 source = source_path.rsplit("/", maxsplit=1)[-1] or source
-            except Exception:  # pragma: no cover
+            except (
+                AttributeError,
+                json.JSONDecodeError,
+                TypeError,
+                ValueError,
+            ):
                 pass
             score = float(hit.get("score") or 0)
             existing = best_by_source.get(source)
@@ -1239,7 +1382,7 @@ class OrchestratorAgent:
         try:
             alerts_data = json.loads(alerts_raw)
             rows = alerts_data.get("rows", [])
-        except Exception:
+        except (AttributeError, json.JSONDecodeError, TypeError, ValueError):
             return ""
 
         if not rows:
@@ -1270,7 +1413,7 @@ class OrchestratorAgent:
                     ts.replace("+00:00", "").replace("Z", "")
                 )
                 latest_label = dt.strftime("%H:%M UTC")
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
                 latest_label = str(timestamps[-1])[:16]
 
         # Timeline — last 8 rows (already sorted DESC by tool).
@@ -1282,7 +1425,7 @@ class OrchestratorAgent:
                     ts.replace("+00:00", "").replace("Z", "")
                 )
                 t_label = dt.strftime("%H:%M UTC")
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
                 t_label = "?:?? UTC"
             sev = r.get("severity", "UNKNOWN")
             pc = r.get("person_count", "?")
@@ -1305,7 +1448,7 @@ class OrchestratorAgent:
                             hb.replace("+00:00", "").replace("Z", "")
                         )
                         h_label = dt.strftime("%H:00")
-                    except Exception:
+                    except (AttributeError, TypeError, ValueError):
                         h_label = str(hb)[:5]
                     avg = tr.get("avg_count", 0)
                     peak = tr.get("peak_count", 0)
@@ -1314,7 +1457,12 @@ class OrchestratorAgent:
                     )
                 if parts:
                     trend_text = "; ".join(parts)
-            except Exception:
+            except (
+                AttributeError,
+                json.JSONDecodeError,
+                TypeError,
+                ValueError,
+            ):
                 pass
 
         return (
@@ -1371,8 +1519,6 @@ class OrchestratorAgent:
             )
 
         # Build the time-window filter: prefer absolute timestamps.
-        from datetime import datetime, timedelta, timezone  # noqa: PLC0415
-
         now = datetime.now(timezone.utc)
         if from_date and to_date:
             try:
@@ -1483,7 +1629,13 @@ class OrchestratorAgent:
                 # Always fetch crowd_counts for SAFE-zone fallback.
                 counts_agg = await conn.fetchrow(counts_agg_query, *q_args)
                 counts_rows = await conn.fetch(counts_rows_query, *q_args)
-        except Exception as exc:  # pylint: disable=broad-except
+        except (
+            asyncpg.PostgresError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
             logger.warning("SQL fallback summary failed: %s", exc)
             return (
                 "INCIDENT_FACTS\n"
@@ -1585,15 +1737,28 @@ class OrchestratorAgent:
             )
 
         trend_parts = []
-        for tr in trend_rows:
+        displayed_trends = list(trend_rows[:12])
+        if len(trend_rows) > 12:
+            displayed_trends.extend(trend_rows[-6:])
+        seen_hours: set[Any] = set()
+        for tr in displayed_trends:
+            hour_bucket = tr["hour_bucket"]
+            if hour_bucket in seen_hours:
+                continue
+            seen_hours.add(hour_bucket)
             hour_label = (
-                tr["hour_bucket"].strftime("%H:00")
-                if tr["hour_bucket"]
+                hour_bucket.strftime("%Y-%m-%d %H:00")
+                if hour_bucket
                 else "??"
             )
             trend_parts.append(
                 f"{hour_label} hour bucket: avg {tr['avg_count']:.1f}, "
                 f"peak {tr['peak_count']}"
+            )
+        if len(trend_rows) > len(seen_hours):
+            trend_parts.append(
+                f"{len(trend_rows) - len(seen_hours)} additional hourly "
+                "buckets compacted; aggregate min/max are in INCIDENT_FACTS"
             )
         trend_text = (
             "; ".join(trend_parts)

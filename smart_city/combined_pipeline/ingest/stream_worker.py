@@ -1,4 +1,10 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
+
+"""
+Stream worker for the combined pipeline.
+"""
 
 from __future__ import annotations
 
@@ -85,6 +91,7 @@ def run_stream_worker(
     # Shared stats dict (multiprocessing Manager dict) updated with live metrics
     shared_stats: Optional[Any] = None,
 ) -> None:
+    """Run the stream worker."""
     faulthandler.enable()
     logging.basicConfig(
         level=logging.INFO,
@@ -188,11 +195,13 @@ def run_stream_worker(
             pass
 
     def _get_publisher(rtsp_url: str, width: int = full_w) -> RtspPublisher:
+        """Get the publisher."""
         return RtspPublisher(
             rtsp_url, width, full_h, output_fps, encode_mode, use_hw=use_hw_encode
         )
 
     def flush_pending() -> None:
+        """Flush the pending."""
         nonlocal expected_seq, yolo_publisher, paired_publisher
         nonlocal _lat_frame_count, in_flight
         nonlocal _latest_count, _latest_latency_ms, _stats_frame_count

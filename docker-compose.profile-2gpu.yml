@@ -1,8 +1,11 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 # Explicit 2-GPU runtime profile.
 # GPU 0: YOLO pipeline workers (2 replicas)
 # GPU 1: DM-Count density + Lemonade LLM
+# Decode: software (libav) — GPU 1 has no VCN headroom with DM-Count + Lemonade running.
 services:
   pipeline:
     devices:
@@ -18,6 +21,12 @@ services:
       STREAM_COUNT: "${STREAM_COUNT:-25}"
       DENSITY_DISPLAY_STREAMS: "${DENSITY_DISPLAY_STREAMS:-${STREAM_COUNT:-25}}"
       ENCODE_MODE: "${ENCODE_MODE:-software}"
+      # GPU 1 already runs DM-Count + Lemonade LLM. Adding VA-API VCN decode
+      # on top causes GPU hangs under load. Force software decode unconditionally
+      # on the 2-GPU profile — the CPU handles libav decode fine at 25 streams.
+      DECODE_MODE: "software"
+      LIBVA_DRIVER_NAME: "dummy"
+      LIBVA_DRIVERS_PATH: "/dev/null"
   lemonade:
     devices:
       - /dev/kfd:/dev/kfd

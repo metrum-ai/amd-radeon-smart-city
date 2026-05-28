@@ -1,4 +1,6 @@
-// Created by Metrum AI for AMD
+//Copyright Advanced Micro Devices, Inc.
+//
+// SPDX-License-Identifier: MIT
 
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
@@ -21,7 +23,7 @@ export default defineConfig({
       output: {
         manualChunks: {
           "react-vendor": ["react", "react-dom"],
-          "map-vendor": ["leaflet", "react-leaflet"],
+          "map-vendor": ["leaflet"],
           "redux-vendor": ["@reduxjs/toolkit", "react-redux"],
         },
       },

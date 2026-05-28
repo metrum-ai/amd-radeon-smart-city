@@ -1,4 +1,6 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 """Milvus-backed vector store for crowd event RAG context."""
 
@@ -11,9 +13,9 @@ logger = logging.getLogger(__name__)
 # this module is still importable in environments without pymilvus, while
 # still allowing callers to catch the narrowest meaningful type when it is
 # available.
-try:  # pragma: no cover - import shim
+try:
     from pymilvus.exceptions import MilvusException  # type: ignore[import-not-found]
-except ImportError:  # pragma: no cover - import shim
+except ImportError:
     class MilvusException(Exception):  # type: ignore[no-redef]
         """Fallback used when pymilvus is unavailable."""
 

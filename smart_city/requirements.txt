@@ -1,3 +1,7 @@
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
+
 # ---------------------------------------------------------------
 # Smart City Public Safety Platform – unified dependencies
 # All versions pinned for reproducible builds.
@@ -8,14 +12,18 @@
 # ---------------------------------------------------------------
 
 # setuptools provides pkg_resources (required by pymilvus)
-setuptools==70.0.0
+setuptools==78.1.1  # H-2: CVE-2025-47273 (path traversal RCE)
 # pymilvus → environs → marshmallow; must be >=3.13 for __version_info__
-marshmallow==3.21.3
+marshmallow==3.26.2  # M-3: CVE-2025-68480 (DoS via Schema.load)
 
 # Web framework
-fastapi==0.111.0
+# fastapi bumped to 0.120.4 to widen the starlette range so we can pin
+# starlette>=0.49.1 below (fixes SNYK-PYTHON-STARLETTE-13733964, ReDoS).
+fastapi==0.120.4
+# Pinned to pick up the ReDoS fix; fastapi 0.120.4 allows starlette <0.50.0,>=0.40.0.
+starlette==0.49.1
 uvicorn[standard]==0.29.0
-python-multipart==0.0.9
+python-multipart==0.0.27  # H-2: CVE-2024-53981, CVE-2026-24486, CVE-2026-42561; M-3: CVE-2026-40347
 
 # Configuration
 pydantic==2.9.2
@@ -30,16 +38,13 @@ asyncpg==0.29.0
 httpx==0.27.0
 
 # LLM / RAG
-sentence-transformers==2.7.0
+sentence-transformers==3.1.0
 pymilvus==2.4.3
-amd-gaia==0.17.0
+amd-gaia==0.19.0  # bumped from 0.17.0; includes 0.17.3 RAG-cache CWE-502 fix (pickle -> signed JSON)
 
 # Video / CV
 opencv-python-headless==4.9.0.80
 numpy==1.26.4
-
-# Object detection – uses ROCm PyTorch pre-installed in base image
-ultralytics==8.2.17
 
 # GStreamer Python bindings are provided by the python3-gi apt package
 # installed in the Dockerfile; no pip package needed.
@@ -48,24 +53,22 @@ ultralytics==8.2.17
 prometheus-client==0.20.0
 
 # PDF parsing (doc_ingestor for RAG knowledge base ingestion)
-pypdf==4.2.0
+pypdf==6.10.2  # M-3: CVE-2025-55197, CVE-2025-62707, CVE-2025-62708, CVE-2026-24688, CVE-2026-27024, CVE-2026-27025, CVE-2026-27026, CVE-2026-27888, CVE-2026-28351, CVE-2026-28804, CVE-2026-31826, CVE-2026-33123, CVE-2026-33699, CVE-2026-40260, CVE-2026-41168, CVE-2026-41312, CVE-2026-41313, CVE-2026-41314
 
 # PDF report rendering (Markdown → HTML → PDF via WeasyPrint)
 # Requires system packages: libpango-1.0-0 libpangocairo-1.0-0 fonts-liberation
-# pydyf 0.12.0 removed Stream.transform() which WeasyPrint 62.3 depends on;
-# pin to the last compatible version.
-markdown==3.6
-pydyf==0.11.0
-weasyprint==62.3
+# pydyf dependency is managed by WeasyPrint 68.0 directly; no separate pin needed.
+markdown==3.8.1  # M-3: CVE-2025-69534 (DoS via malformed HTML sequences)
+weasyprint==68.0  # H-2: CVE-2025-68616 (SSRF bypass)
 
 # Testing
-pytest==8.2.0
-pytest-asyncio==0.23.6
+pytest==9.0.3
+pytest-asyncio==1.3.0   # requires pytest<10,>=8.2 — first version compatible with pytest 9.x
 pytest-cov==5.0.0
 
 # Playwright (end-to-end browser tests)
 playwright==1.44.0
-pytest-playwright==0.5.0
+pytest-playwright==0.7.2  # 0.5.0 required pytest<9; 0.7.2 is first release supporting pytest 9.x (pytest<10)
 
 # Linting / formatting
 ruff==0.4.4

@@ -1,4 +1,6 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 """Prometheus metrics registry for the Smart City platform."""
 
@@ -14,7 +16,6 @@ try:
         Counter,
         Gauge,
         Histogram,
-        Summary,
     )
 
     # ------------------------------------------------------------------

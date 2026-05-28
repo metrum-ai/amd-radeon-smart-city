@@ -1,4 +1,6 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 """Batch seed script: populates TimescaleDB with 2 months of synthetic crowd data.
 
@@ -21,11 +23,13 @@ import asyncio
 import logging
 import os
 import random
-from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import asyncpg
+import yaml
 
+from smart_city.core.stream_allocation import apply_city_allocation
 from smart_city.simulator.data_gen import (
     ZoneSpec,
     _crowd_count,
@@ -46,13 +50,8 @@ def _load_zones_from_metadata() -> list[ZoneSpec]:
     Returns:
         List of ZoneSpec objects for all configured streams.
     """
-    import yaml  # noqa: PLC0415
-    from pathlib import Path as _Path  # noqa: PLC0415
-    from smart_city.core.stream_allocation import (  # noqa: PLC0415
-        apply_city_allocation,
-    )
     _cfg_path = (
-        _Path(__file__).resolve().parents[1] / "config" / "streams_metadata.yaml"
+        Path(__file__).resolve().parents[1] / "config" / "streams_metadata.yaml"
     )
     try:
         with open(_cfg_path, encoding="utf-8") as _f:

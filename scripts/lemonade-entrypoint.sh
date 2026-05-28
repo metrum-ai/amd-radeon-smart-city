@@ -1,5 +1,8 @@
 #!/bin/sh
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
+
 
 # Lemonade server entrypoint: starts lemond and auto-loads the configured model.
 # The model is pulled on first run and served from the persistent lemonade-cache

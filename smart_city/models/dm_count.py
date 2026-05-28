@@ -1,4 +1,10 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
+
+"""
+DM-Count density estimation model.
+"""
 
 from __future__ import annotations
 
@@ -24,6 +30,7 @@ VGG19_CFG = [
 
 
 def _make_vgg_layers(cfg: list, batch_norm: bool = False) -> nn.Sequential:
+    """Make VGG19 layers."""
     layers: list[nn.Module] = []
     in_channels = 3
     for v in cfg:
@@ -43,6 +50,7 @@ class VGG19DensityModel(nn.Module):
     """VGG19-based density estimation matching DM-Count architecture."""
 
     def __init__(self) -> None:
+        """Initialize the VGG19-based density estimation model."""
         super().__init__()
         self.features = _make_vgg_layers(VGG19_CFG)
         self.reg_layer = nn.Sequential(
@@ -57,6 +65,7 @@ class VGG19DensityModel(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Forward pass of the DM-Count model."""
         x = self.features(x)
         x = F.interpolate(x, scale_factor=2, mode="bilinear", align_corners=False)
         x = self.reg_layer(x)
@@ -71,6 +80,7 @@ class DMCountEstimator:
     """DM-Count density estimation wrapper."""
 
     def __init__(self, weights_path: Optional[str] = None, device: str = "cpu"):
+        """Initialize the DM-Count estimator."""
         self.weights_path = weights_path
         self.device = torch.device(device)
         self._model: Optional[VGG19DensityModel] = None
@@ -83,6 +93,7 @@ class DMCountEstimator:
         ])
 
     def load(self) -> None:
+        """Load the DM-Count model."""
         logger.info("Loading DM-Count model on %s", self.device)
         self._model = VGG19DensityModel()
 
@@ -102,6 +113,7 @@ class DMCountEstimator:
         logger.info("DM-Count model ready (FP16) on %s", self.device)
 
     def infer_batch(self, frames: list[np.ndarray]) -> list[tuple[np.ndarray, float]]:
+        """Infer the density of a batch of frames."""
         if self._model is None:
             raise RuntimeError("Model not loaded. Call load() first.")
 

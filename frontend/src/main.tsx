@@ -1,4 +1,6 @@
-// Created by Metrum AI for AMD
+// Copyright Advanced Micro Devices, Inc.
+//
+// SPDX-License-Identifier: MIT
 
 import React from 'react';
 import ReactDOM from 'react-dom/client';

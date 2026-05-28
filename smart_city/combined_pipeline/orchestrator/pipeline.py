@@ -1,4 +1,6 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 from __future__ import annotations
 
@@ -41,6 +43,8 @@ def _run_yolo_server(**kwargs: object) -> None:
     physical_gpu = int(kwargs.get("gpu_id", 0))
     os.environ["ROCR_VISIBLE_DEVICES"] = str(physical_gpu)
     os.environ["HSA_VISIBLE_DEVICES"] = str(physical_gpu)
+    hsa_gfx = os.environ.get("HSA_OVERRIDE_GFX_VERSION", "12.0.1")
+    os.environ["HSA_OVERRIDE_GFX_VERSION"] = hsa_gfx
     # Within this process, the one visible GPU is always device_id=0.
     kwargs = dict(kwargs)
     kwargs["gpu_id"] = 0
@@ -53,6 +57,18 @@ def _run_density_server_onnx(**kwargs: object) -> None:
     phys_gpu = str(kwargs.pop("physical_gpu", 1))
     os.environ["ROCR_VISIBLE_DEVICES"] = phys_gpu
     os.environ["HSA_VISIBLE_DEVICES"] = phys_gpu
+    # Explicitly pin HSA_OVERRIDE_GFX_VERSION so MIGraphX sees the correct
+    # target architecture (gfx1201 / RDNA4) regardless of spawn-time env state.
+    hsa_gfx = os.environ.get("HSA_OVERRIDE_GFX_VERSION", "12.0.1")
+    os.environ["HSA_OVERRIDE_GFX_VERSION"] = hsa_gfx
+    # Disable MIGraphX MLIR backend for density inference.
+    # The MLIR path generates mlir_convert_convolution_broadcast_add_relu kernels
+    # that produce HSA_STATUS_ERROR_ILLEGAL_INSTRUCTION on gfx1201 when FP16 is
+    # enabled.  The non-MLIR MIGraphX path is gfx1201-compatible and still
+    # honours migraphx_fp16_enable without crashing. Keep this scoped to density:
+    # YOLO's raw_onnx path also uses MIGraphX and should keep the known-good
+    # default MLIR behavior.
+    os.environ.setdefault("MIGRAPHX_DISABLE_MLIR", "1")
     from combined_pipeline.inference.density_server_onnx import run_density_server_onnx
     run_density_server_onnx(**kwargs)  # type: ignore[arg-type]
 
@@ -166,7 +182,7 @@ def run_pipeline(
     iou_th = float(yolo_cfg.get("iou_threshold", 0.45))
     max_det = int(yolo_cfg.get("max_detections", 100))
     warmup_bs = [int(x) for x in yolo_cfg.get("warmup_batch_sizes", [1, 4, 8])]
-    yolo_backend = str(yolo_cfg.get("backend", "ultralytics"))
+    yolo_backend = str(yolo_cfg.get("backend", "raw_onnx"))
     migraphx_options = yolo_cfg.get("migraphx_options", {}) or {}
     replicas_per_gpu = max(1, int(yolo_cfg.get("replicas_per_gpu", 1)))
     yolo_start_gpu = int(yolo_cfg.get("start_gpu_id", 0))  # physical GPU offset for YOLO servers

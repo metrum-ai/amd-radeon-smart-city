@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
+
 """Export an Ultralytics YOLO model to FP16 ONNX for MIGraphX inference.
 
 This is the conversion step that turns the upstream Ultralytics ``.pt`` weights
@@ -40,6 +43,7 @@ def export_fp16(
     dynamic: bool,
     opset: int,
 ) -> None:
+    """Export the YOLO model to FP16 ONNX."""
     try:
         from ultralytics import YOLO
     except ImportError as exc:
@@ -78,6 +82,7 @@ def export_fp16(
 
 
 def main() -> None:
+    """Main function."""
     parser = argparse.ArgumentParser(
         description="Export YOLO to FP16 ONNX at inference resolution",
     )

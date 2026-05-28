@@ -1,10 +1,12 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 """SOP recommendation specialist agent."""
 
 try:
     from gaia.agents.base.tools import tool
-except ImportError:  # pragma: no cover - exercised where GAIA is unavailable
+except ImportError:
     def tool(func):  # type: ignore[no-redef]
         """Fallback no-op decorator when GAIA is not installed."""
         return func

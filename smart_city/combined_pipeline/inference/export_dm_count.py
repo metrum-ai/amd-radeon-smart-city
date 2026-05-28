@@ -1,4 +1,6 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 """
 Export DM-Count VGG19 model to ONNX for MIGraphX inference.
@@ -31,17 +33,21 @@ class _DensityExport:
         infer_w: int,
         infer_h: int,
     ) -> None:
+        """Export the DM-Count model to ONNX."""
         import torch
         import torch.nn as nn
 
         from models.dm_count import VGG19DensityModel
 
         class _ExportWrapper(nn.Module):
+            """Export wrapper for the DM-Count model."""
             def __init__(self, base: VGG19DensityModel) -> None:
+                """Initialize the export wrapper."""
                 super().__init__()
                 self.base = base
 
             def forward(self, x: torch.Tensor) -> torch.Tensor:
+                """Forward pass."""
                 # Return only the raw density map; count = density.sum()
                 mu, _ = self.base(x)
                 return mu
@@ -95,6 +101,7 @@ def export_dm_count_onnx(
 
 
 def main() -> None:
+    """Main function."""
     parser = argparse.ArgumentParser(description="Export DM-Count weights to ONNX")
     parser.add_argument("--weights", required=True, help="Path to DM-Count .pth weights")
     parser.add_argument("--output", required=True, help="Path to write ONNX model")

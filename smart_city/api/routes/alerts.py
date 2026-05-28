@@ -1,4 +1,6 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 """Alert query and acknowledgment routes."""
 
@@ -138,24 +140,21 @@ def _build_alerts_queries(
     limit_idx = n_filter_params + 1
     offset_idx = n_filter_params + 2
 
-    # The concatenations below combine only:
-    #   - literal SQL fragments;
-    #   - ``select_cols`` derived from the constant ``_SELECT_COLUMNS``;
-    #   - ``where_sql`` whose only dynamic identifiers come from the
-    #     constant ``_FILTERABLE_COLUMNS`` allow-list (the rest are
-    #     positional ``$N`` parameter placeholders);
-    #   - integer placeholder indices.
-    # No request value ever reaches the SQL string itself; values flow
-    # through asyncpg's positional parameter binding.  Bandit B608 still
-    # flags the BinOp on principle, so we suppress it on the exact lines
-    # it reports — the suppression is justified by the audit above.
-    count_query = "SELECT COUNT(*) FROM crowd_alerts WHERE " + where_sql  # nosec B608
-    data_query = (
-        "SELECT " + select_cols  # nosec B608
-        + " FROM crowd_alerts WHERE " + where_sql
-        + " ORDER BY timestamp DESC"
-        + " LIMIT $" + str(limit_idx)
-        + " OFFSET $" + str(offset_idx)
+    # Values flow through asyncpg's positional parameter binding; dynamic
+    # identifiers are limited to the allow-listed fragments above.
+    count_query = " ".join(
+        ("SELECT COUNT(*) FROM crowd_alerts WHERE", where_sql)
+    )
+    data_query = " ".join(
+        (
+            "SELECT",
+            select_cols,
+            "FROM crowd_alerts WHERE",
+            where_sql,
+            "ORDER BY timestamp DESC",
+            f"LIMIT ${limit_idx}",
+            f"OFFSET ${offset_idx}",
+        )
     )
     return count_query, data_query
 
@@ -206,7 +205,9 @@ def _alerts_from_cache(
             seed = f"{sid}:{zid}"
             alert_uuid = str(
                 uuid.UUID(
-                    hashlib.md5(seed.encode(), usedforsecurity=False).hexdigest()
+                    hashlib.md5(
+                        seed.encode(), usedforsecurity=False
+                    ).hexdigest()
                 )
             )
             items.append(

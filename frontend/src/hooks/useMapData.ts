@@ -1,4 +1,6 @@
-// Created by Metrum AI for AMD
+// Copyright Advanced Micro Devices, Inc.
+//
+// SPDX-License-Identifier: MIT
 
 /**
  * useMapData - fetches live camera map data and subscribes to

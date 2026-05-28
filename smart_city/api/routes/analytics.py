@@ -1,4 +1,6 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 """Analytics endpoints: density, heatmap, patterns, KPIs, weekly heatmap, trends."""
 import base64
@@ -19,6 +21,7 @@ from smart_city.api.models import (
     PatternResponse, TrendResponse, TrendZone, WeeklyHeatmapResponse,
     ZoneDensity,
 )
+from smart_city.core.stream_allocation import apply_city_allocation
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["analytics"])
@@ -359,10 +362,6 @@ _RANGE_DAYS: dict = {"day": 1, "week": 7, "month": 30, "quarter": 90}
 @lru_cache(maxsize=1)
 def _load_stream_city_index() -> tuple[dict[str, str], dict[str, str]]:
     """Load zone->city and location->city mappings from stream metadata."""
-    from smart_city.core.stream_allocation import (  # noqa: PLC0415
-        apply_city_allocation,
-    )
-
     cfg_path = (
         Path(__file__).resolve().parents[2]
         / "config"

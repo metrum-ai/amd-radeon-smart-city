@@ -1,4 +1,6 @@
-// Created by Metrum AI for AMD
+// Copyright Advanced Micro Devices, Inc.
+//
+// SPDX-License-Identifier: MIT
 
 export interface CrowdSimConfig {
   people: number;

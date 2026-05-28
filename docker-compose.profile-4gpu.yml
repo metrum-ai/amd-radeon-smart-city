@@ -1,4 +1,6 @@
-# Created by Metrum AI for AMD
+# Copyright Advanced Micro Devices, Inc.
+#
+# SPDX-License-Identifier: MIT
 
 # Explicit 4-GPU high-YOLO-FPS runtime profile.
 # GPU 0: DM-Count density
@@ -23,6 +25,10 @@ services:
       STREAM_COUNT: "${STREAM_COUNT:-50}"
       DENSITY_DISPLAY_STREAMS: "${DENSITY_DISPLAY_STREAMS:-${STREAM_COUNT:-50}}"
       ENCODE_MODE: "${ENCODE_MODE:-software}"
+      # YOLO runs on GPUs 1 and 2 here, so pin VA-API decode to GPU 0's VCN
+      # block (DM-Count's GPU). That keeps the video decoder off the MIGraphX
+      # compute GPUs while DM-Count's CUs are still warming up.
+      HW_DECODE_VAAPI_GPU: "0"
   lemonade:
     devices:
       - /dev/kfd:/dev/kfd
