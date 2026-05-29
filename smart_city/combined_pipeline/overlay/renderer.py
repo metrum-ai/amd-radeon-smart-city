@@ -61,9 +61,8 @@ def draw_detections(
 ) -> None:
     """In-place draw segmentation masks on uint8 HWC RGB frame.
 
-    Uses per-pixel blending on the decoded binary mask — identical to how
-    Ultralytics renders internally. No polygon round-trip means no loss of
-    boundary detail on irregular shapes.
+    Uses per-pixel blending on the decoded binary mask. No polygon round-trip
+    means no loss of boundary detail on irregular shapes.
     """
     if not detections:
         if count_label:

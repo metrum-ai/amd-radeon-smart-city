@@ -113,9 +113,23 @@ sudo chown -R $USER:$USER /opt/smartcity/lemonade
 
 ---
 
-### 5. Start the stack
+### 5. Prepare the YOLOv26 ONNX model
 
-The recommended path is the guided `setup.sh` script — it writes and updates `.env` (including all required secrets such as `HF_TOKEN` and `POSTGRES_PASSWORD`), copies demo videos into `videos/`, downloads the LLM model weights, selects the appropriate 2‑GPU or 4‑GPU profile, exports the YOLO ONNX, and builds and starts everything:
+Before running `setup.sh`, provide the YOLOv26 ONNX model at the path expected
+by the runtime:
+
+```text
+smart_city/models/yolo26s-384-dynamic.onnx
+```
+
+This repository does not install `ultralytics`, download YOLOv26 weights, or export the model during setup. Follow
+[yolo26_onnx_export.md](docs/yolo26_onnx_export.md) to download the model you are licensed to use, export it to ONNX, and place it at the required path.
+
+---
+
+### 6. Start the stack
+
+The recommended path is the guided `setup.sh` script — it writes and updates `.env` (including all required secrets such as `HF_TOKEN` and `POSTGRES_PASSWORD`), copies demo videos into `videos/`, downloads the LLM model weights, selects the appropriate 2‑GPU or 4‑GPU profile, verifies the YOLOv26 ONNX file is present, and builds and starts everything:
 
 ```bash
 ./setup.sh
@@ -138,7 +152,7 @@ Either path brings up:
 
 ---
 
-### 6. Verify deployment
+### 7. Verify deployment
 
 ```bash
 docker compose ps
@@ -152,7 +166,7 @@ curl http://localhost:5173/api/v1/streams
 
 ---
 
-### 7. Access the application
+### 8. Access the application
 
 Use one of the following based on where the stack is running:
 

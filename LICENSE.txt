@@ -14,7 +14,7 @@ Media Technologies that are owed as a result of your use of FFmpeg or
 this Software.
 
 FFmpeg is used by this project and is licensed under the GNU Lesser
-General Public License version 2.1 or later (LGPL v2.1+). This project
+General Public License version 2.1 or later (LGPL-2.1-or-later). This project
 uses FFmpeg in its default LGPL configuration (without --enable-gpl or
 --enable-nonfree). Full license text: https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
 

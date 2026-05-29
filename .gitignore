@@ -149,7 +149,9 @@ cython_debug/
 data/videos/*.mp4
 data/videos/*.avi
 data/videos/*.mkv
+*.pt
 *.pth
+*.onnx
 data/
 *.mdc
 CLAUDE.md

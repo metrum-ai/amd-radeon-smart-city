@@ -61,7 +61,6 @@ DM_COUNT_PTH="smart_city/models/model_sh_B.pth"
 # pipeline will load ORT + MIGraphX from this file without running the exporter.
 DM_COUNT_ONNX="smart_city/models/dm_count_b8_160x120.onnx"
 YOLO_ONNX="smart_city/models/yolo26s-384-dynamic.onnx"
-YOLO_PT="yolo26s.pt"
 
 echo ""
 hr
@@ -564,21 +563,13 @@ else
     ok "DM-Count ONNX exported: ${DM_COUNT_ONNX}"
 fi
 
-# --- YOLO ONNX (export on demand from Ultralytics .pt) ---
+# --- YOLO ONNX (user-provided export artifact) ---
 if [ -f "$YOLO_ONNX" ]; then
     SIZE_MB=$(du -m "$YOLO_ONNX" | awk '{print $1}')
     ok "YOLO ONNX present: ${YOLO_ONNX} (${SIZE_MB} MB)"
 else
-    info "YOLO ONNX missing — exporting ${YOLO_PT} → ${YOLO_ONNX}"
-    _venv_pip_install "torch" "torch"
-    _venv_pip_install "ultralytics" "ultralytics"
-    _venv_pip_install "onnx>=1.12.0,<2.0.0" "onnx"
-    _venv_pip_install "onnxruntime" "onnxruntime"
-    if ! "$MODEL_EXPORT_PYTHON" scripts/export_yolo_onnx.py --model "$YOLO_PT" --output "$YOLO_ONNX"; then
-        error "YOLO export failed — see error above."
-        die "Cannot continue without YOLO ONNX."
-    fi
-    ok "YOLO ONNX exported: ${YOLO_ONNX}"
+    error "YOLO ONNX missing: ${YOLO_ONNX}"
+    die "Create the ONNX file outside project dependency setup; see docs/yolo26_onnx_export.md."
 fi
 
 echo ""

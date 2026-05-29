@@ -175,9 +175,8 @@ def _encode_mask(
 ) -> bytes | None:
     """Return zlib-compressed uint8 binary mask cropped to the detection bbox.
 
-    The renderer decodes, reshapes to (y2-y1, x2-x1), and blends per-pixel —
-    identical to how Ultralytics renders masks internally. No polygon conversion
-    means no loss of boundary detail.
+    The renderer decodes, reshapes to (y2-y1, x2-x1), and blends per-pixel.
+    No polygon conversion means no loss of boundary detail.
     """
     mh, mw = protos.shape[1], protos.shape[2]
     flat = mask_coeff @ protos.reshape(32, -1)

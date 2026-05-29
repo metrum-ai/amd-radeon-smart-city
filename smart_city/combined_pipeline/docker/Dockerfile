@@ -40,15 +40,14 @@ RUN VENV_SP=$(python -c 'import site; print(site.getsitepackages()[0])') && \
     ln -sf /usr/lib/python3/dist-packages/gi "$VENV_SP/gi" && \
     python -c "import gi; gi.require_version('Gst', '1.0'); from gi.repository import Gst; print(Gst.version_string())"
 
-# Python dependencies — onnxruntime-rocm (MIGraphX) + torchvision + ultralytics
+# Python dependencies — onnxruntime-rocm (MIGraphX) + torchvision
 RUN pip uninstall -y onnxruntime onnxruntime-gpu onnxruntime-rocm 2>/dev/null || true && \
     pip install --no-cache-dir \
         "numpy>=1.26,<3" \
         "pyyaml>=6,<7" \
         "opencv-python-headless>=4.9,<5" \
         "torchvision" \
-        "onnx>=1.16,<2" \
-        "ultralytics>=8.3.0" && \
+        "onnx>=1.16,<2" && \
     pip install --no-cache-dir \
         https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2/onnxruntime_migraphx-1.23.2-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl
 
