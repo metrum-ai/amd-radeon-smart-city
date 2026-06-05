@@ -5,6 +5,12 @@ SPDX-License-Identifier: MIT
 -->
 # Release Notes
 
+## v1.3.1
+
+### Updates
+
+* **Minor Documentation Fix**: The documentation directory (`docs/`) is now available in the repository; it was previously missing from earlier release.
+
 ## v1.3
 
 ### Features
