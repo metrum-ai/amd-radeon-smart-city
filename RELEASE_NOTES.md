@@ -5,6 +5,12 @@ SPDX-License-Identifier: MIT
 -->
 # Release Notes
 
+## v1.3.2
+
+### Updates
+
+* **Disclaimer - Model Performance Limitations**: Added a dedicated disclaimer documenting known accuracy boundaries for YOLOv26 object detection and DM-Count crowd density estimation models.
+
 ## v1.3.1
 
 ### Updates

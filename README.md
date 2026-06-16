@@ -381,3 +381,8 @@ Performance varies by hardware and software configurations, including testing co
 
 ---
 
+## Disclaimer (Model Performance Limitations)
+
+This solution is provided as a technology demonstration and has been validated against the sample video footage included in the `videos/` directory of this repository. The bundled clips represent the scene types, camera angles, and crowd density ranges for which the pipeline has been evaluated and tuned. Both models, YOLOv26 for object detection and DM-Count for crowd density estimation, have known accuracy boundaries: YOLOv26 is less reliable in highly dense crowd scenarios, and DM-Count is less reliable in very sparse crowd scenarios. For any other videos or external camera streams, accuracy is not guaranteed and may produce unexpected results including significant over- or under-counting, missed detections, or spurious alerts. Results should be treated as indicative rather than authoritative.
+
+---
