@@ -14,6 +14,8 @@ import logging
 from pathlib import Path
 from typing import List
 
+from smart_city.llm.vector_store import MilvusException
+
 logger = logging.getLogger(__name__)
 
 _SUPPORTED_SUFFIXES = {".txt", ".md", ".pdf"}
@@ -201,7 +203,13 @@ async def ingest_documents(
             logger.info(
                 "Ingested %d chunks from %s.", len(chunks), file_path.name
             )
-        except (OSError, ValueError, RuntimeError, TypeError) as exc:
+        except (
+            OSError,
+            ValueError,
+            RuntimeError,
+            TypeError,
+            MilvusException,
+        ) as exc:
             logger.error(
                 "Failed to ingest %s: %s", file_path, exc, exc_info=True
             )

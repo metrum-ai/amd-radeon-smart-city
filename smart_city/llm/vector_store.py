@@ -23,6 +23,10 @@ except ImportError:
 COLLECTION_NAME = "crowd_events"
 EMBEDDING_DIM = 384
 
+# Bound on every blocking pymilvus RPC — without it, a slow Milvus can
+# hang the caller indefinitely with no visible signal of what's wrong.
+_MILVUS_TIMEOUT_S = 30.0
+
 
 class VectorStoreClient:
     """Thin async wrapper around the Milvus collection for RAG.
@@ -64,7 +68,9 @@ class VectorStoreClient:
         """
         from pymilvus import connections
 
-        connections.connect(host=self._host, port=self._port)
+        connections.connect(
+            host=self._host, port=self._port, timeout=_MILVUS_TIMEOUT_S
+        )
         self._ensure_collection()
         logger.info(
             "Connected to Milvus collection '%s'.",
@@ -155,7 +161,7 @@ class VectorStoreClient:
                         "params": {"M": 16, "efConstruction": 256},
                     },
                 )
-            self._collection.load()
+            self._collection.load(timeout=_MILVUS_TIMEOUT_S)
         except (MilvusException, ImportError, RuntimeError, OSError) as exc:
             logger.error(
                 "_ensure_collection failed: %s", exc, exc_info=True
@@ -193,7 +199,7 @@ class VectorStoreClient:
             return
         meta = metadata or ["{}"] * len(texts)
         self._collection.insert([texts, meta, embeddings])
-        self._collection.flush()
+        self._collection.flush(timeout=_MILVUS_TIMEOUT_S)
 
     # ------------------------------------------------------------------
     # Read
@@ -226,6 +232,7 @@ class VectorStoreClient:
             limit=top_k,
             expr=expr,
             output_fields=["text", "metadata"],
+            timeout=_MILVUS_TIMEOUT_S,
         )
 
         hits = []

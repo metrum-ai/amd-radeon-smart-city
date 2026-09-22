@@ -9,6 +9,10 @@ WORKDIR /app
 
 ENV CI=true
 
+# ICE servers (STUN/TURN), JSON array — empty by default, no external dependency.
+ARG VITE_ICE_SERVERS=""
+ENV VITE_ICE_SERVERS=${VITE_ICE_SERVERS}
+
 # Install pnpm globally — version pinned to match pnpm-lock.yaml format
 RUN npm install -g pnpm@10.30.2
 

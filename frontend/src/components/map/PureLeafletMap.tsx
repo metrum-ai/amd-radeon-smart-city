@@ -80,13 +80,19 @@ interface PureTileLayerProps {
   maxZoom: number;
   subdomains: string | string[];
   url: string;
+  onTileFailure?: (failed: boolean) => void;
 }
+
+// An unreachable tile host never fires Leaflet's `error` event (just hangs),
+// so tiles stay silently blank forever. Flag stale ones for a CSS placeholder.
+const TILE_LOAD_TIMEOUT_MS = 6_000;
 
 export function PureTileLayer({
   attribution,
   maxZoom,
   subdomains,
   url,
+  onTileFailure,
 }: PureTileLayerProps) {
   const map = useLeafletMap();
 
@@ -97,11 +103,54 @@ export function PureTileLayer({
       maxZoom,
       subdomains,
     });
+
+    // No internet (or blocked host) never throws — just hangs or 404s — so
+    // we infer failure from "nothing has loaded, but something has failed/timed out".
+    let hasLoaded = false;
+    let hasFailed = false;
+    const reportStatus = () => onTileFailure?.(hasFailed && !hasLoaded);
+
+    const pending = new Set<HTMLElement>();
+    const onTileLoadStart = (e: L.LeafletEvent) => {
+      const tile = (e as unknown as { tile: HTMLElement }).tile;
+      if (!tile) return;
+      pending.add(tile);
+      const timer = window.setTimeout(() => {
+        if (pending.has(tile)) {
+          tile.classList.add("leaflet-tile-timeout");
+          hasFailed = true;
+          reportStatus();
+        }
+      }, TILE_LOAD_TIMEOUT_MS);
+      const clear = () => {
+        pending.delete(tile);
+        window.clearTimeout(timer);
+        tile.classList.remove("leaflet-tile-timeout");
+      };
+      tile.addEventListener("load", clear, { once: true });
+      tile.addEventListener("error", clear, { once: true });
+    };
+    const onTileLoad = () => {
+      hasLoaded = true;
+      reportStatus();
+    };
+    const onTileError = () => {
+      hasFailed = true;
+      reportStatus();
+    };
+    layer.on("tileloadstart", onTileLoadStart);
+    layer.on("tileload", onTileLoad);
+    layer.on("tileerror", onTileError);
+
     layer.addTo(map);
     return () => {
+      layer.off("tileloadstart", onTileLoadStart);
+      layer.off("tileload", onTileLoad);
+      layer.off("tileerror", onTileError);
       layer.remove();
+      onTileFailure?.(false);
     };
-  }, [attribution, map, maxZoom, subdomains, url]);
+  }, [attribution, map, maxZoom, onTileFailure, subdomains, url]);
 
   return null;
 }

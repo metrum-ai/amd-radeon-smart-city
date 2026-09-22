@@ -53,17 +53,32 @@ def _decode_mask(
     return x1, y1, x2, y2, raw
 
 
+# Display-only cap on detections drawn per frame; alerting uses the full
+# list upstream (stream_worker.py), so this never affects counts/alerts.
+_MAX_RENDER_DETECTIONS = 30
+
+
 def draw_detections(
     frame_rgb: np.ndarray,
     detections: list[Detection],
     *,
     count_label: str | None = None,
+    max_render: int = _MAX_RENDER_DETECTIONS,
 ) -> None:
     """In-place draw segmentation masks on uint8 HWC RGB frame.
 
     Uses per-pixel blending on the decoded binary mask. No polygon round-trip
     means no loss of boundary detail on irregular shapes.
+
+    Draws at most `max_render` detections (highest-score first); `count_label`
+    still reports the true total when capped.
     """
+    total = len(detections)
+    if total > max_render:
+        detections = sorted(detections, key=lambda d: d.score, reverse=True)[:max_render]
+        if count_label:
+            count_label = f"{count_label} ({max_render} shown)"
+
     if not detections:
         if count_label:
             cv2.putText(

@@ -22,6 +22,18 @@ from smart_city.llm.vector_store import MilvusException
 
 logger = logging.getLogger(__name__)
 
+# Matches unfilled template placeholders like "[N]" or "[YYYY-MM-DD...]" —
+# form structure, not data — so they don't leak into generated reports.
+_PLACEHOLDER_TOKEN_RE = re.compile(
+    r"\[\s*(?:"
+    r"YYYY[-/]?MM[-/]?DD[^\]]*"  # [YYYY-MM-DD HH:MM:SS UTC]
+    r"|\d+(?:\.\d+)?\s*[-–]\s*\d+(?:\.\d+)?"  # [0.00-1.00]
+    r"|N(?:\s+\w+)?"  # [N], [N persons], [N minutes]
+    r"|[A-Z]{1,4}"  # [ID], [TBD], ...
+    r")\s*\]"
+)
+
+
 class OrchestratorAgent:
     """Coordinates specialist agents and synthesizes final report."""
 
@@ -1111,6 +1123,11 @@ class OrchestratorAgent:
         return "\n".join(lines) if lines else block
 
     @staticmethod
+    def _contains_unfilled_placeholder(sentence: str) -> bool:
+        """True if `sentence` contains an unfilled template placeholder."""
+        return bool(_PLACEHOLDER_TOKEN_RE.search(sentence))
+
+    @staticmethod
     def _is_table_row_sentence(sentence: str) -> bool:
         """Return True if sentence looks like a threshold table row."""
         if re.match(
@@ -1172,6 +1189,8 @@ class OrchestratorAgent:
                     continue
                 if cls._is_table_row_sentence(sentence):
                     continue
+                if cls._contains_unfilled_placeholder(sentence):
+                    continue
                 lowered = sentence.lower()
                 if not any(
                     keyword in lowered
@@ -1208,6 +1227,7 @@ class OrchestratorAgent:
                         s
                         and not s[0].islower()
                         and not cls._is_table_row_sentence(s)
+                        and not cls._contains_unfilled_placeholder(s)
                     )
                 ]
                 if valid:
@@ -1282,6 +1302,8 @@ class OrchestratorAgent:
                 if sentence and sentence[0].islower():
                     continue
                 if cls._is_table_row_sentence(sentence):
+                    continue
+                if cls._contains_unfilled_placeholder(sentence):
                     continue
                 low = sentence.lower()
                 clean = cls._clean_text(sentence)

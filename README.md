@@ -84,7 +84,7 @@ cd smartcity-public-safety
 ### 2. Verify ROCm and GPU visibility
 
 ```bash
-rocm-smi
+amd-smi list
 ```
 
 ---
@@ -149,6 +149,7 @@ Either path brings up:
 
 > [!NOTE]
 > First boot can take **5–10 minutes** while images build, ROCm initializes, and the LLM weights load. Check progress with `docker compose ps`.
+> This is highly dependent on the machine's internet latency and can vary.
 
 ---
 
@@ -226,6 +227,8 @@ Once the dashboard opens you can:
 - **Switch cities via the dropdown** — pick **Austin**, **Dallas**, or **Houston** to recenter the map and load that city's hotspots. Hover over any hotspot to view a detailed tooltip containing the density heatmap and YOLOv26 detection results.
 - **Watch processed camera video** — each tile displays real-time YOLOv26-based person and vehicle detection overlays, along with a DM-Count density heatmap representing crowd intensity. Additionally, each stream includes key performance metrics such as frames per second (FPS), people count, and latency.
 - **Page through cameras** — use the pagination control under the camera grid to walk through the next set of streams without leaving the map.
+
+> Switching cities or swapping demo videos can take 1–2 minutes to fully reflect on the dashboard, depending on machine latency.
 
 ---
 

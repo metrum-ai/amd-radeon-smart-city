@@ -117,7 +117,9 @@ def _probe_vaapi_once() -> bool:
         r = subprocess.run(
             [
                 "ffmpeg", "-hide_banner", "-loglevel", "error",
-                "-f", "lavfi", "-i", "nullsrc=s=64x64:r=1",
+                # h264_vaapi's minimum is 96x32 — 64x64 always failed here,
+                # permanently forcing the software fallback regardless of hardware support.
+                "-f", "lavfi", "-i", "nullsrc=s=128x128:r=1",
                 "-frames:v", "1",
                 "-vaapi_device", "/dev/dri/renderD128",
                 "-vf", "format=nv12,hwupload",
@@ -188,15 +190,31 @@ def run_pipeline(
     yolo_start_gpu = int(yolo_cfg.get("start_gpu_id", 0))  # physical GPU offset for YOLO servers
 
     decode_mode = str(ingest_cfg.get("decode_mode", "software"))
-    # Hardware decode routes to GPU 1 (renderD129) to keep VA-API off the YOLO GPU.
-    # GPU 1 is idle during stream startup (DensityServer has 110s delay) so its
-    # VCN video decode block is available without competing with MIGraphX.
+    # Spread decode across every render node found at runtime: one VCN block
+    # carrying all streams capped the pipeline. Engineering by Metrum AI.
     hw_decode_vaapi_gpu = int(ingest_cfg.get("hw_decode_vaapi_gpu", 1))
-    vaapi_device_path = f"/dev/dri/renderD{128 + hw_decode_vaapi_gpu}"
+    _gpus_env = str(os.environ.get("HW_DECODE_VAAPI_GPUS", "")).strip()
+    if _gpus_env:
+        _decode_gpu_ids = [int(x) for x in _gpus_env.split(",") if x.strip() != ""]
+    else:
+        _decode_gpu_ids = sorted(
+            int(node.name[len("renderD"):]) - 128
+            for node in Path("/dev/dri").glob("renderD*")
+            if node.name[len("renderD"):].isdigit()
+        )
+    if not _decode_gpu_ids:
+        _decode_gpu_ids = [hw_decode_vaapi_gpu]
+    vaapi_device_paths = [f"/dev/dri/renderD{128 + g}" for g in _decode_gpu_ids]
+    vaapi_device_path = vaapi_device_paths[0]
+    logger.info(
+        "Hardware decode spread across %d VA-API render node(s): %s",
+        len(vaapi_device_paths), ", ".join(vaapi_device_paths),
+    )
     # Limit hardware decode to first N streams to avoid KFD overload at scale.
     hw_decode_max = int(ingest_cfg.get("hw_decode_max_streams", stream_count))
     # Stagger VA-API context creation across workers to avoid surge-induced driver hang.
     hw_decode_stagger_ms = int(ingest_cfg.get("hw_decode_stagger_ms", 200))
+    paired_switch_stagger_ms = int(ingest_cfg.get("paired_switch_stagger_ms", 250))
     encode_mode = str(output_cfg.get("encode_mode", "hardware"))
     output_fps = int(output_cfg.get("fps", 30))
 
@@ -383,37 +401,51 @@ def run_pipeline(
     logger.info("Stats dump thread started → %s", pipeline_stats_path)
 
     # --- Density server (ONNX + MIGraphX on GPU) ---
+    # DM-Count batch baked at 8 (~605 fps/server); replicas share the queue. Metrum AI.
+    density_replicas = max(1, int(os.environ.get("DENSITY_REPLICAS", "1")))
+    _dens_gpus_env = str(os.environ.get("DENSITY_PHYSICAL_GPUS", "")).strip()
+    if _dens_gpus_env:
+        _dens_gpu_ids = [int(x) for x in _dens_gpus_env.split(",") if x.strip() != ""]
+    else:
+        _dens_gpu_ids = [density_physical_gpu]
+
+    density_procs: list[Process] = []
     density_proc: Optional[Process] = None
     if density_enabled and display_streams > 0 and density_in_q is not None:
         # Delay = (stream_count streams × 1 s stagger) + 60 s steady-state buffer.
         # VGG19 MIGraphX compilation stresses the shared KFD module; delaying until
         # all 50 stream workers are up and YOLO is in steady state prevents SIGABRT.
         density_startup_delay = stream_count * 1.0 + 60.0
-        density_proc = Process(
-            target=_run_density_server_onnx,
-            kwargs=dict(
-                gpu_id=density_gpu_id,
-                physical_gpu=density_physical_gpu,
-                model_path=density_onnx_path,
-                infer_w=density_infer_w,
-                infer_h=density_infer_h,
-                batch_size=density_batch,
-                batch_timeout_ms=density_timeout_ms,
-                in_queue=density_in_q,
-                result_queues=density_out_qs,
-                stop_event=stop_event,
-                compile_lock=compile_lock,
-                startup_delay_s=density_startup_delay,
-                migraphx_options=density_migraphx_options,
-            ),
-            name="density-onnx",
-            daemon=True,
-        )
-        density_proc.start()
-        logger.info(
-            "DensityServer-ONNX started (pid=%d gpu=%d display_streams=%d)",
-            density_proc.pid, density_gpu_id, display_streams,
-        )
+        for _r in range(density_replicas):
+            _phys = _dens_gpu_ids[_r % len(_dens_gpu_ids)]
+            _proc = Process(
+                target=_run_density_server_onnx,
+                kwargs=dict(
+                    gpu_id=density_gpu_id,
+                    physical_gpu=_phys,
+                    model_path=density_onnx_path,
+                    infer_w=density_infer_w,
+                    infer_h=density_infer_h,
+                    batch_size=density_batch,
+                    batch_timeout_ms=density_timeout_ms,
+                    in_queue=density_in_q,
+                    result_queues=density_out_qs,
+                    stop_event=stop_event,
+                    compile_lock=compile_lock,
+                    # Stagger compiles; concurrent MIGraphX builds can SIGABRT.
+                    startup_delay_s=density_startup_delay + _r * 15.0,
+                    migraphx_options=density_migraphx_options,
+                ),
+                name=f"density-onnx-{_r}",
+                daemon=True,
+            )
+            _proc.start()
+            density_procs.append(_proc)
+            logger.info(
+                "DensityServer-ONNX replica=%d started (pid=%d phys-gpu=%d display_streams=%d)",
+                _r, _proc.pid, _phys, display_streams,
+            )
+        density_proc = density_procs[0] if density_procs else None
 
     # --- Stream workers (staggered 1 s apart to avoid VA-API init spikes) ---
     workers: list[Process] = []
@@ -453,9 +485,13 @@ def run_pipeline(
                 output_fps=output_fps,
                 encode_mode=encode_mode,
                 decode_mode=stream_decode_mode,
-                vaapi_gpu_id=hw_decode_vaapi_gpu,
-                vaapi_device=vaapi_device_path if stream_decode_mode == "hardware" else None,
+                vaapi_gpu_id=_decode_gpu_ids[sid % len(_decode_gpu_ids)],
+                vaapi_device=(
+                    vaapi_device_paths[sid % len(vaapi_device_paths)]
+                    if stream_decode_mode == "hardware" else None
+                ),
                 hw_decode_stagger_ms=hw_decode_stagger_ms if stream_decode_mode == "hardware" else 0,
+                paired_switch_stagger_ms=paired_switch_stagger_ms,
                 density_in_queue=density_in_q if sid < display_streams else None,
                 density_out_queue=density_out_qs.get(sid),
                 density_frame_interval=density_frame_interval,
@@ -483,7 +519,7 @@ def run_pipeline(
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
-    all_procs = yolo_procs + ([density_proc] if density_proc else []) + workers
+    all_procs = yolo_procs + density_procs + workers
 
     try:
         while not stop_event.is_set():

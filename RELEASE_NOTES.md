@@ -5,6 +5,24 @@ SPDX-License-Identifier: MIT
 -->
 # Release Notes
 
+## v1.4
+
+### Updates
+
+* **Non‑Blocking API Startup**: RAG document ingestion and local embedding‑model loading no longer block API startup — both now run in the background with bounded timeouts, with progress reported on `/api/v1/health`.
+
+* **API Health Reflects Real System State**: `/api/v1/health` now reports TimescaleDB connectivity and RAG ingestion status. The dashboard's old status bar, which hardcoded placeholder values ("API Connected", "WebSocket Active", "P95: 67ms") and was never wired up, has been removed; a status indicator backed by this endpoint has not been rebuilt yet.
+
+* **More Resilient Container Startup**: Frontend nginx now resolves `api` / `mediamtx` / `prometheus` upstreams lazily via Docker's embedded DNS and Prometheus/frontend no longer wait on the API's database health to start.
+
+#### Minor Fixes
+
+* Map view shows a "Map tiles unavailable" banner instead of leaving tiles blank when the tile provider is unreachable.
+* WebRTC STUN/TURN servers can now be configured via `VITE_ICE_SERVERS` for deployments spanning multiple network segments; single‑LAN deployments remain zero‑config.
+* `setup.sh` reuses existing Postgres credentials when a TimescaleDB volume already exists, instead of prompting for a new password.
+* Fixed the VAAPI hardware‑encode probe using an invalid test resolution that always failed; `ENCODE_MODE=hardware` can now genuinely engage. `software` remains the deployed default — profiling showed all‑stream hardware encode saturates a single shared GPU encode engine, reducing throughput.
+* Self‑hosted the Inter typeface (`fontsource/inter`) instead of loading it from Google Fonts at runtime, removing a hard internet dependency.
+
 ## v1.3.2
 
 ### Updates
@@ -91,8 +109,8 @@ SPDX-License-Identifier: MIT
 
 | Component | Version | License |
 |-----------|---------|---------|
-| React | 19.0.0 | [MIT](https://github.com/facebook/react/blob/main/LICENSE) |
-| react‑dom | 19.0.0 | [MIT](https://github.com/facebook/react/blob/main/LICENSE) |
+| React | 19.2.6 | [MIT](https://github.com/facebook/react/blob/main/LICENSE) |
+| react‑dom | 19.2.6 | [MIT](https://github.com/facebook/react/blob/main/LICENSE) |
 | react‑redux | 9.2.0 | [MIT](https://github.com/reduxjs/react-redux/blob/master/LICENSE.md) |
 | reduxjs/toolkit | 2.11.2 | [MIT](https://github.com/reduxjs/redux-toolkit/blob/master/LICENSE) |
 | mui/material | 7.3.8 | [MIT](https://github.com/mui/material-ui/blob/master/LICENSE) |
@@ -101,12 +119,13 @@ SPDX-License-Identifier: MIT
 | emotion/styled | 11.14.1 | [MIT](https://github.com/emotion-js/emotion/blob/main/LICENSE) |
 | echarts | 6.0.0 | [Apache-2.0](https://github.com/apache/echarts/blob/master/LICENSE) |
 | leaflet | 1.9.4 | [BSD-2-Clause](https://github.com/Leaflet/Leaflet/blob/main/LICENSE) |
-| dompurify | 3.4.0 | [Apache-2.0 OR MPL-2.0](https://github.com/cure53/DOMPurify/blob/main/LICENSE) |
+| dompurify | 3.4.5 | [Apache-2.0 OR MPL-2.0](https://github.com/cure53/DOMPurify/blob/main/LICENSE) |
 | marked | 17.0.5 | [MIT](https://github.com/markedjs/marked/blob/master/LICENSE) |
 | motion | 12.34.3 | [MIT](https://github.com/motiondivision/motion/blob/master/LICENSE.md) |
 | fontsource‑variable/geist‑mono | 5.2.7 | [OFL-1.1](https://github.com/vercel/geist-font/blob/main/LICENSE.txt) |
-| TypeScript | 5.4.5 | [Apache-2.0](https://github.com/microsoft/TypeScript/blob/main/LICENSE.txt) |
-| Vite | 5.2.14 | [MIT](https://github.com/vitejs/vite/blob/main/LICENSE) |
+| fontsource/inter | 5.3.0 | [OFL-1.1](https://github.com/rsms/inter/blob/master/LICENSE.txt) |
+| TypeScript | 5.9.3 | [Apache-2.0](https://github.com/microsoft/TypeScript/blob/main/LICENSE.txt) |
+| Vite | 5.4.21 | [MIT](https://github.com/vitejs/vite/blob/main/LICENSE) |
 | pnpm (build tool) | 10.30.2 | [MIT](https://github.com/pnpm/pnpm/blob/main/LICENSE) |
 
 #### Base Docker Images

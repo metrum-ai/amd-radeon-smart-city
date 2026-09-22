@@ -40,6 +40,9 @@ ingest:
   # this, 50+ workers initialise VA-API simultaneously and the driver hangs.
   # 200 ms per stream means a 50-stream startup spreads init over ~10 s.
   hw_decode_stagger_ms: 200
+  # Stagger the per-stream switch from "_yolo" to "_paired" RTSP output (ms),
+  # same reasoning as hw_decode_stagger_ms above.
+  paired_switch_stagger_ms: 250
 
 yolo:
   model_path: "/app/models/yolo26s-384-dynamic.onnx"
@@ -48,6 +51,8 @@ yolo:
   batch_timeout_ms: 10
   infer_width: 384
   infer_height: 384
+  # Restored to the standard default now that postprocess.py no longer
+  # double-applies sigmoid to this export's already-post-sigmoid scores.
   conf_threshold: 0.25
   iou_threshold: 0.45
   max_detections: 100

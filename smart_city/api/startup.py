@@ -861,7 +861,10 @@ async def init_app_state(app: FastAPI, config: Any) -> None:
             embed_base_url = None
 
     if vector_store is not None:
-        embedder = Embedder(
+        # Embedder(base_url=None) can block for tens of seconds loading a
+        # local model (bounded internally — see embedder.py); keep off the event loop.
+        embedder = await asyncio.to_thread(
+            Embedder,
             model_name=getattr(
                 config.rag, "embedding_model", "BAAI/bge-small-en-v1.5"
             ),
@@ -870,7 +873,10 @@ async def init_app_state(app: FastAPI, config: Any) -> None:
     else:
         embedder = None
 
-    # --- Blocking document ingestion ---
+    # --- Document ingestion (backgrounded, does not block startup) ---
+    app.state.rag_ingestion_status = "not_started"
+    app.state.rag_ingestion_chunks = 0
+    app.state.rag_ingestion_error = None
     if vector_store is not None:
         docs_path = getattr(config.rag, "docs_ingest_path", "/app/data/docs")
         # Only index PDF/MD — plain-text duplicates produce NaN embeddings and
@@ -883,17 +889,47 @@ async def init_app_state(app: FastAPI, config: Any) -> None:
         # slate — prevents duplicate chunks accumulating across restarts.
         vector_store.drop_and_recreate()
 
-        logger.info("RAG document ingestion starting (blocking startup)…")
-        _n_chunks = await ingest_documents(
-            docs_ingest_path=docs_path,
-            docs_glob=docs_glob,
-            embedder=embedder,
-            vector_store=vector_store,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
+        async def _run_rag_ingestion() -> None:
+            """Ingest RAG documents in the background so startup isn't blocked.
+
+            /api/v1/health reports rag_ingestion_status for readiness.
+            """
+            app.state.rag_ingestion_status = "running"
+            try:
+                n_chunks = await ingest_documents(
+                    docs_ingest_path=docs_path,
+                    docs_glob=docs_glob,
+                    embedder=embedder,
+                    vector_store=vector_store,
+                    chunk_size=chunk_size,
+                    chunk_overlap=chunk_overlap,
+                )
+                app.state.rag_ingestion_chunks = n_chunks
+                app.state.rag_ingestion_status = "complete"
+                logger.info(
+                    "RAG document ingestion complete: %d chunks indexed.",
+                    n_chunks,
+                )
+            except (
+                OSError,
+                ValueError,
+                RuntimeError,
+                TypeError,
+                MilvusException,
+            ) as exc:
+                app.state.rag_ingestion_status = "failed"
+                app.state.rag_ingestion_error = str(exc)
+                logger.error(
+                    "RAG document ingestion failed: %s", exc, exc_info=True
+                )
+
+        logger.info(
+            "RAG document ingestion starting in the background "
+            "(no longer blocks startup)…"
         )
-        logger.info("RAG document ingestion complete: %d chunks indexed.", _n_chunks)
+        asyncio.create_task(_run_rag_ingestion())
     else:
+        app.state.rag_ingestion_status = "skipped"
         logger.warning("Skipping RAG document ingestion — Milvus unavailable.")
 
     # --- Wire ReportGenerator (non-fatal: vLLM is optional) ---

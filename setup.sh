@@ -325,31 +325,57 @@ if [ "$SKIP_ENV" -eq 0 ]; then
 
     # --- Postgres credentials ---
     echo -e "  ${BOLD}TimescaleDB / Postgres${NC}"
-    read -rp "  Postgres username [smartcity]: " _pg_user || _pg_user=""
-    _pg_user="${_pg_user:-smartcity}"
 
-    while true; do
-        read -rsp "  Postgres password (will not be echoed): " _pg_pw
-        echo ""
-        if [ -z "${_pg_pw:-}" ]; then
-            error "  Password cannot be empty."
-            continue
-        fi
-        if [ "$_pg_pw" = "changeme" ] || [ "$_pg_pw" = "password" ]; then
-            warn "  '$_pg_pw' is a default placeholder — please pick something stronger."
-            continue
-        fi
-        read -rsp "  Confirm password: " _pg_pw2
-        echo ""
-        if [ "$_pg_pw" != "$_pg_pw2" ]; then
-            error "  Passwords do not match — try again."
-            continue
-        fi
-        break
-    done
+    # Postgres only applies POSTGRES_PASSWORD on first initdb; a new one
+    # written to .env against an existing volume would silently not apply.
+    _pg_volume_exists=false
+    if docker volume ls --format '{{.Name}}' 2>/dev/null | grep -q 'timescaledb_data$'; then
+        _pg_volume_exists=true
+    fi
+    _pg_existing_pw="$(env_file_value POSTGRES_PASSWORD .env || true)"
 
-    read -rp "  Postgres database name [smartcity_db]: " _pg_db || _pg_db=""
-    _pg_db="${_pg_db:-smartcity_db}"
+    if [ "$_pg_volume_exists" = true ] && [ -n "$_pg_existing_pw" ]; then
+        warn "  An existing 'timescaledb_data' Docker volume was found."
+        warn "  Postgres only applies POSTGRES_PASSWORD on first init of a fresh"
+        warn "  volume — entering a new one now would NOT update the already"
+        warn "  -initialized database and would silently break DATABASE_URL auth."
+        warn "  Reusing the existing credentials from .env."
+        warn "  To set a genuinely new password, first wipe the volume (this"
+        warn "  deletes all TimescaleDB data): docker compose down -v"
+        _pg_user="$(env_file_value POSTGRES_USER .env || true)"
+        _pg_user="${_pg_user:-smartcity}"
+        _pg_pw="$_pg_existing_pw"
+        _pg_db="$(env_file_value POSTGRES_DB .env || true)"
+        _pg_db="${_pg_db:-smartcity_db}"
+        info "  Postgres username: ${_pg_user} (reused)"
+        info "  Postgres database: ${_pg_db} (reused)"
+    else
+        read -rp "  Postgres username [smartcity]: " _pg_user || _pg_user=""
+        _pg_user="${_pg_user:-smartcity}"
+
+        while true; do
+            read -rsp "  Postgres password (will not be echoed): " _pg_pw
+            echo ""
+            if [ -z "${_pg_pw:-}" ]; then
+                error "  Password cannot be empty."
+                continue
+            fi
+            if [ "$_pg_pw" = "changeme" ] || [ "$_pg_pw" = "password" ]; then
+                warn "  '$_pg_pw' is a default placeholder — please pick something stronger."
+                continue
+            fi
+            read -rsp "  Confirm password: " _pg_pw2
+            echo ""
+            if [ "$_pg_pw" != "$_pg_pw2" ]; then
+                error "  Passwords do not match — try again."
+                continue
+            fi
+            break
+        done
+
+        read -rp "  Postgres database name [smartcity_db]: " _pg_db || _pg_db=""
+        _pg_db="${_pg_db:-smartcity_db}"
+    fi
 
     sed -i "s|^POSTGRES_USER=.*|POSTGRES_USER=${_pg_user}|" .env
     sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${_pg_pw}|" .env

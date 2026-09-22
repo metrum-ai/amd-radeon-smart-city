@@ -88,6 +88,7 @@ def run_stream_worker(
     use_hw_encode: bool = False,
     vaapi_device: Optional[str] = None,
     hw_decode_stagger_ms: int = 0,
+    paired_switch_stagger_ms: int = 0,
     # Shared stats dict (multiprocessing Manager dict) updated with live metrics
     shared_stats: Optional[Any] = None,
 ) -> None:
@@ -97,6 +98,9 @@ def run_stream_worker(
         level=logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
+
+    _worker_start_time = time.monotonic()
+    _paired_switch_delay_s = (stream_id * paired_switch_stagger_ms) / 1000.0
 
     infer_dtype = np.dtype(infer_dtype_str)
     store = attach_frame_store(
@@ -304,7 +308,11 @@ def run_stream_worker(
             det_label = f"det:{r.count}"
             draw_detections(yolo_frame, r.detections, count_label=det_label)
 
-            if is_density_stream and latest_density_map is not None:
+            _paired_ready = (
+                paired_publisher is not None
+                or now >= _worker_start_time + _paired_switch_delay_s
+            )
+            if is_density_stream and latest_density_map is not None and _paired_ready:
                 # Density streams with density data: publish paired (YOLO | Density)
                 # Recompute the heatmap RGB panel only when latest_density_map
                 # actually changed (`is` identity check; we keep a reference to

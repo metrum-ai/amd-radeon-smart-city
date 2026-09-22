@@ -38,11 +38,12 @@ import { SEV_COLORS, SEV_RADIUS } from "../data";
 import { useHotspotConfig } from "../hooks/useHotspotConfig";
 import { useMapData } from "../hooks/useMapData";
 import { useAlerts } from "../hooks/useAlerts";
+import { ICE_SERVERS } from "../lib/runtimeConfig";
 import "../styles/components/MapPanel.css";
 
-const GOOGLE_TILES =
-  "https://mt{s}.google.com/vt/lyrs=r&x={x}&y={y}&z={z}";
+const GOOGLE_TILES = "https://mt{s}.google.com/vt/lyrs=r&x={x}&y={y}&z={z}";
 const GOOGLE_ATTRIBUTION = "Google Maps";
+
 const TOOLTIP_OFFSET: [number, number] = [0, -8];
 
 function MapInvalidator() {
@@ -109,10 +110,7 @@ const FILL_VIDEO: CSSProperties = {
   objectFit: "cover",
 };
 
-// No external STUN — the deployment is LAN/on-prem; ICE-TCP via the nginx
-// stream proxy uses host candidates only.  External STUN would require an
-// internet round-trip that blocks ICE gathering for 5–8 s on isolated networks.
-const ICE_SERVERS: RTCIceServer[] = [];
+// ICE_SERVERS (empty by default) comes from runtimeConfig.
 
 // Maximum ms to wait for ICE gathering before sending the WHEP offer.
 // Host candidates appear in < 50 ms on LAN; the cap prevents an indefinite
@@ -745,6 +743,7 @@ export default function MapPanel() {
   const { mapData: cityMapData, loading: mapLoading } = useMapData(10_000, selectedCityLabel);
   const cityStreamCount = cityMapData?.cameras.length ?? 0;
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [tilesUnavailable, setTilesUnavailable] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const dropdownId = useId();
 
@@ -773,6 +772,11 @@ export default function MapPanel() {
   return (
     <div className="map-panel">
       <div className="map-inner">
+        {tilesUnavailable && (
+          <div className="map-offline-banner">
+            Map tiles unavailable — internet connection required
+          </div>
+        )}
         <PureMapContainer
           center={loc.center}
           zoom={loc.zoom}
@@ -785,6 +789,7 @@ export default function MapPanel() {
             url={GOOGLE_TILES}
             subdomains="0123"
             maxZoom={20}
+            onTileFailure={setTilesUnavailable}
           />
           <MapInvalidator />
           <FlyTo center={loc.center} zoom={loc.zoom} />

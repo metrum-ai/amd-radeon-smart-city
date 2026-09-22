@@ -11,11 +11,31 @@ import concurrent.futures
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+# Some LLM backends mis-decode multi-byte UTF-8 (e.g. CJK tokens in <think>
+# blocks) into long runs of '?'/U+FFFD. Detect and hide rather than show it.
+_GARBLED_RUN_RE = re.compile(r"[?�]{8,}")
+_REPLACEMENT_CHARS = frozenset("?�")
+_GARBLED_PLACEHOLDER = (
+    "(reasoning output omitted — the LLM returned undecodable text)"
+)
+
+
+def _looks_garbled(text: str) -> bool:
+    """True if `text` looks corrupted by a lossy encode/decode round-trip."""
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if _GARBLED_RUN_RE.search(stripped):
+        return True
+    bad = sum(1 for c in stripped if c in _REPLACEMENT_CHARS)
+    return bad / len(stripped) > 0.3
 
 try:
     from openai import OpenAIError
@@ -367,7 +387,7 @@ class GaiaBaseAgent(Agent):
             if isinstance(obj, dict):
                 thought = str(obj.get("thought") or "").strip()
                 if thought:
-                    return thought
+                    return _GARBLED_PLACEHOLDER if _looks_garbled(thought) else thought
                 # If there is no thought, skip intermediate planning steps
                 # that carry no user-visible information.
                 return ""
@@ -375,12 +395,16 @@ class GaiaBaseAgent(Agent):
             pass
         # Plain text response — return as-is (truncated for display)
         one_line = " ".join(raw.split())
+        if _looks_garbled(one_line):
+            return _GARBLED_PLACEHOLDER
         return one_line[:300] if len(one_line) > 300 else one_line
 
     @staticmethod
     def _summarize_result(result: str) -> str:
         """Create a short single-line summary for trace output."""
         one_line = " ".join(result.split())
+        if _looks_garbled(one_line):
+            return _GARBLED_PLACEHOLDER
         if len(one_line) <= 180:
             return one_line
         return f"{one_line[:177]}..."

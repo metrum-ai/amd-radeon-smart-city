@@ -17,7 +17,7 @@ import type { Severity } from "../features/app/appSlice";
 import { AnimatedNumber } from "../hooks/AnimatedNumber";
 import { useHotspotConfig } from "../hooks/useHotspotConfig";
 import { useMapData } from "../hooks/useMapData";
-import { API_BASE } from "../lib/runtimeConfig";
+import { API_BASE, ICE_SERVERS } from "../lib/runtimeConfig";
 
 const PAGE_SIZE = 6;
 const STREAM_LIMIT = 100;
@@ -48,12 +48,6 @@ const FILL_VIDEO: React.CSSProperties = {
   height: "100%",
   objectFit: "cover",
 };
-
-// STUN servers for WebRTC NAT traversal (Bug 310)
-const ICE_SERVERS: RTCIceServer[] = [
-  { urls: "stun:stun.l.google.com:19302" },
-  { urls: "stun:stun1.l.google.com:19302" },
-];
 
 /**
  * Direct WHEP WebRTC player for MediaMTX stream endpoints.

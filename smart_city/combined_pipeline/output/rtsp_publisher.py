@@ -21,6 +21,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 _WRITE_STALL_TIMEOUT_S = 5.0
+_RTSP_IO_TIMEOUT_US = 10_000_000
 
 # Module-level cache so probing happens once per process, not once per stream
 _vaapi_encode_available: Optional[bool] = None
@@ -129,6 +130,9 @@ def _build_ffmpeg_cmd(
             "-maxrate", f"{max_kbps}k",
             "-bufsize", f"{bufsize_kbps}k",
             "-bf", "0",
+            # x264 auto-threads off host nproc (192) by default: measured 54
+            # threads/ffmpeg x 50 streams. Pin low; this encode is tiny.
+            "-threads", "2",
             "-x264-params",
             (
                 "repeat-headers=1:"
@@ -141,7 +145,9 @@ def _build_ffmpeg_cmd(
         ]
     return common + enc + [
         "-flush_packets", "1",
-        "-f", "rtsp", "-rtsp_transport", "tcp", rtsp_url,
+        "-f", "rtsp", "-rtsp_transport", "tcp",
+        "-timeout", str(_RTSP_IO_TIMEOUT_US),
+        rtsp_url,
     ]
 
 

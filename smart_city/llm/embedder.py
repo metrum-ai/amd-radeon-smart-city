@@ -13,12 +13,17 @@ Supports two backends:
    directly in-process.  Used when ``base_url`` is empty.
 """
 
+import concurrent.futures
 import logging
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MODEL = "BAAI/bge-small-en-v1.5"
+
+# Bound on the local sentence-transformers model load — first-run downloads
+# from HuggingFace Hub are otherwise unbounded and can block startup for minutes.
+_LOCAL_MODEL_LOAD_TIMEOUT_S = 30.0
 
 
 class Embedder:
@@ -73,26 +78,76 @@ class Embedder:
     # ------------------------------------------------------------------
 
     def _load_local(self) -> None:
-        """Attempt to load the sentence-transformers model locally."""
+        """Load the model on a worker thread with a hard timeout so a slow
+        HuggingFace Hub can't block the caller; a late load is adopted via ``_on_late_local_load``."""
         try:
             from sentence_transformers import (  # pylint: disable=import-outside-toplevel
                 SentenceTransformer,
-            )
-
-            self._model = SentenceTransformer(self._model_name)
-            self._dim = self._model.get_sentence_embedding_dimension()
-            logger.info(
-                "Embedder: local model '%s' loaded (dim=%d).",
-                self._model_name,
-                self._dim,
             )
         except ImportError:
             logger.warning(
                 "sentence-transformers not installed; "
                 "using zero-vector fallback."
             )
+            return
+
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = pool.submit(SentenceTransformer, self._model_name)
+        try:
+            self._model = future.result(timeout=_LOCAL_MODEL_LOAD_TIMEOUT_S)
+            self._dim = self._model.get_sentence_embedding_dimension()
+            logger.info(
+                "Embedder: local model '%s' loaded (dim=%d).",
+                self._model_name,
+                self._dim,
+            )
+        except concurrent.futures.TimeoutError:
+            logger.error(
+                "Embedder: local model '%s' did not finish loading within "
+                "%.0fs (likely a slow/unreachable HuggingFace Hub download); "
+                "using zero-vector embeddings for now instead of blocking "
+                "startup indefinitely.",
+                self._model_name,
+                _LOCAL_MODEL_LOAD_TIMEOUT_S,
+            )
+            future.add_done_callback(self._on_late_local_load)
         except (OSError, RuntimeError, ValueError) as exc:
             logger.error("Embedder local load failed: %s", exc, exc_info=True)
+        finally:
+            # Don't block waiting for a still-running load thread; the
+            # done-callback picks up the result later if it completes.
+            pool.shutdown(wait=False)
+
+    def _on_late_local_load(
+        self, future: "concurrent.futures.Future"
+    ) -> None:
+        """Adopt a model that finished loading after the load timeout.
+
+        Args:
+            future: The completed (or failed) background load future.
+        """
+        if future.cancelled():
+            return
+        exc = future.exception()
+        if exc is not None:
+            logger.error(
+                "Embedder: deferred local model load for '%s' failed: %s",
+                self._model_name,
+                exc,
+            )
+            return
+        model = future.result()
+        self._model = model
+        try:
+            self._dim = model.get_sentence_embedding_dimension()
+        except (RuntimeError, ValueError, AttributeError):
+            pass
+        logger.info(
+            "Embedder: local model '%s' finished loading late (dim=%d); "
+            "no longer using zero-vector fallback.",
+            self._model_name,
+            self._dim,
+        )
 
     # ------------------------------------------------------------------
     # Properties

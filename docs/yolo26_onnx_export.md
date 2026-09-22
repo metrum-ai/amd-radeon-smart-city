@@ -18,11 +18,28 @@ Source: https://www.ultralytics.com/license
 
 Run these commands outside the product dependency setup. `/tmp` is used here so the export tooling does not become part of the application environment:
 
+> [!NOTE]
+> Make sure `python3-venv` is installed first (e.g. `sudo apt install -y python3-venv`).
+
 ```bash
 python3 -m venv /tmp/yolo26-export
 /tmp/yolo26-export/bin/python -m pip install --upgrade pip
-/tmp/yolo26-export/bin/python -m pip install ultralytics onnx onnxruntime
+/tmp/yolo26-export/bin/python -m pip install ultralytics==8.4.152 onnx==1.22.0 onnxruntime==1.30.0
 ```
+
+> [!IMPORTANT]
+> These versions are pinned deliberately — do not drop the `==` pins. An
+> earlier revision of this doc installed `ultralytics onnx onnxruntime`
+> unpinned, which installs whatever is latest on PyPI at export time.
+> `yolo26` is a very recently added model family, so that path is not
+> reproducible: running the identical command on two different days can
+> silently produce a materially different ONNX export from the same `.pt`
+> checkpoint (different default export flags, opset lowering behavior, or
+> an `ultralytics` regression specific to this model family), with no
+> error or warning. If you deliberately upgrade these versions, re-verify
+> detection quality and pipeline FPS against a known-good baseline before
+> treating the new export as a drop-in replacement — see the "Model
+> Performance Limitations" section of README.md.
 
 ## 3. Download The YOLOv26 Model
 

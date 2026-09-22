@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -167,11 +167,21 @@ def create_app(config: Optional[Any] = None) -> FastAPI:
     _start_time = time.time()
 
     @app.get("/api/v1/health", tags=["system"])
-    async def _health() -> dict:
+    async def _health(response: Response) -> dict:
+        # db_pool is None if TimescaleDB auth failed at startup; surface
+        # that as 503 so the Docker healthcheck (curl) sees it, not silence.
+        db_pool = getattr(app.state, "db_pool", None)
+        db_ok = db_pool is not None
+        if not db_ok:
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {
-            "status": "ok",
+            "status": "ok" if db_ok else "degraded",
             "version": "1.0.0",
             "uptime_s": round(time.time() - _start_time, 1),
+            "database": "connected" if db_ok else "unavailable",
+            "rag_ingestion_status": getattr(
+                app.state, "rag_ingestion_status", "not_started"
+            ),
         }
 
     # ---------------------------------------------------------------

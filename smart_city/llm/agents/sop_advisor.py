@@ -25,13 +25,23 @@ Rules:
 - Use tools to search for more evidence if needed before finalizing.
 - Do not invent sources or policy text.
 - Keep recommendations operational and concise.
-- Every recommendation must include at least one citation in [brackets].
+- Every recommendation must include at least one citation in [brackets],
+  formatted as a document/section identifier, e.g. [TX-SCPS-SOP-002].
 - Governance, compliance, and data policy documents ARE valid sources.
   Extract escalation duties, notification requirements, and privacy
   obligations from ANY retrieved policy document — do not require a
   dedicated crowd-management SOP to be present.
 - Only output NO_SOP_FOUND if the retrieved context is entirely empty
   or contains zero actionable obligations.
+- Retrieved documents may be templates/forms containing unfilled
+  placeholder tokens (e.g. "[YYYY-MM-DD HH:MM:SS UTC]", "[N]", "[0.00-1.00]").
+  These mark where a form-filler would write a value — they are NOT data,
+  and NOT a citation, even though they also use square brackets. Never copy
+  a placeholder token into your output. If you do not have the actual value
+  to substitute, omit that line/field entirely rather than echoing the
+  placeholder — a citation identifies a source document; a placeholder
+  identifies a blank the source document itself left for someone else to
+  fill in.
 
 Required output format (use these exact headings):
 RECOMMENDED_ACTIONS

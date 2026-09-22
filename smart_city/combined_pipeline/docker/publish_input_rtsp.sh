@@ -28,11 +28,29 @@ fi
 VIDEO_DIR="${VIDEO_DIR:-/videos}"
 INPUT_BASE_RTSP="${INPUT_BASE_RTSP:-rtsp://mediamtx:8554/cam}"
 REALTIME_INPUT="${REALTIME_INPUT:-1}"
+# Source clips are 720p High-profile. Re-encoding down to 480p Baseline
+# roughly doubles hardware decode capacity downstream (measured). 
+CACHE_DIR="${PUBLISH_CACHE_DIR:-/tmp/publish-cache}"
+PUBLISH_SCALE="${PUBLISH_SCALE:-854:480}"
 
 mapfile -t VIDEO_FILES < <(ls "$VIDEO_DIR"/*.mp4 2>/dev/null | sort)
 if [ "${#VIDEO_FILES[@]}" -eq 0 ]; then
   echo "[publish_input_rtsp] no mp4 files found in $VIDEO_DIR" >&2
   exit 1
+fi
+
+if [ -n "$PUBLISH_SCALE" ]; then
+  mkdir -p "$CACHE_DIR"
+  echo "[publish_input_rtsp] pre-transcoding ${#VIDEO_FILES[@]} clip(s) to ${PUBLISH_SCALE} (one-time)"
+  for src in "${VIDEO_FILES[@]}"; do
+    dst="$CACHE_DIR/$(basename "$src")"
+    if [ ! -s "$dst" ]; then
+      ffmpeg -y -nostdin -loglevel error -i "$src" -an \
+        -vf "scale=${PUBLISH_SCALE}" -c:v libx264 -profile:v baseline \
+        -preset veryfast -crf 23 "$dst"
+    fi
+  done
+  mapfile -t VIDEO_FILES < <(ls "$CACHE_DIR"/*.mp4 2>/dev/null | sort)
 fi
 
 echo "[publish_input_rtsp] publishing ${STREAM_COUNT} streams from ${#VIDEO_FILES[@]} video file(s)"

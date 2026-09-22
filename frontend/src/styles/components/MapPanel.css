@@ -178,9 +178,7 @@
   color: var(--text-primary);
 }
 
-.leaflet-control-attribution {
-  display: none !important;
-}
+/* Attribution stays visible (restyled below) — required for OSM data. */
 
 .leaflet-control-zoom {
   display: none !important;
@@ -381,4 +379,37 @@
 
 .leaflet-tooltip-top::before {
   border-top-color: rgba(14, 14, 17, .92) !important;
+}
+
+.leaflet-control-attribution {
+  display: none !important;
+}
+
+/* Shown on a tile stuck past TILE_LOAD_TIMEOUT_MS (PureLeafletMap.tsx). */
+.leaflet-tile-timeout {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, .03),
+    rgba(255, 255, 255, .03) 10px,
+    rgba(255, 255, 255, .06) 10px,
+    rgba(255, 255, 255, .06) 20px
+  ) !important;
+}
+
+/* Shown when tiles fail without ever loading (PureLeafletMap.tsx onTileFailure).
+   Bottom-center, clear of the top city-select/alert-stream and the bottom-left info chip. */
+.map-offline-banner {
+  position: absolute;
+  bottom: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 500;
+  background: rgba(14, 14, 17, .85);
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  pointer-events: none;
+  white-space: nowrap;
 }

@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 _gst_child_ready = False
 SOFTWARE_DECODER = "avdec_h264 direct-rendering=false"
 
+# Leaky ingest queue depth in frames (~2 s at 30 fps), set in frames so it
+# behaves identically on any host. Engineering by Metrum AI.
+_INGEST_QUEUE_BUFFERS = max(2, int(os.environ.get("RTSP_INGEST_QUEUE_BUFFERS", "60")))
+
 
 @contextlib.contextmanager
 def _suppress_native_stderr() -> Iterator[None]:
@@ -113,17 +117,26 @@ def pick_decoder(*, decode_mode: str, gpu_id: int, vaapi_device: str | None = No
 def build_rtsp_pipeline(
     rtsp_url: str, decoder: str, width: int | None, height: int | None
 ) -> str:
-    scale_caps = ""
-    scale_chain = ""
-    if width and height:
-        scale_chain = "videoscale ! "
-        scale_caps = f",width={width},height={height}"
+    """Build the GStreamer pipeline description for one RTSP input stream."""
+    # Queue decouples decode so rtspsrc keeps draining the socket (else MediaMTX
+    # drops the reader); scale before convert saves ~5x pixel work. Metrum AI.
     decode_chain = f"{decoder} ! "
+    ingest_queue = (
+        f"queue name=ingestq max-size-buffers={_INGEST_QUEUE_BUFFERS} "
+        "max-size-bytes=0 max-size-time=0 leaky=downstream ! "
+    )
+    if width and height:
+        convert_chain = (
+            f"videoscale ! video/x-raw,width={width},height={height} ! "
+            "videoconvert ! video/x-raw,format=RGB ! "
+        )
+    else:
+        convert_chain = "videoconvert ! video/x-raw,format=RGB ! "
     return (
         f"rtspsrc location={rtsp_url} latency=100 protocols=tcp ! "
         "rtph264depay ! h264parse ! "
-        f"{decode_chain}videoconvert ! {scale_chain}"
-        f"video/x-raw,format=RGB{scale_caps} ! "
+        f"{ingest_queue}"
+        f"{decode_chain}{convert_chain}"
         "appsink name=sink emit-signals=false sync=false max-buffers=1 drop=true"
     )
 

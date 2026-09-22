@@ -43,11 +43,71 @@ fi
 
 # Register the model if not already in catalog (idempotent — pull handles both
 # first-time download and resuming from an already-downloaded cache).
+pull_model() {
+    curl -sf -X POST "http://localhost:${PORT}/api/v1/pull" \
+        -H "Content-Type: application/json" \
+        -d "{\"model_name\": \"${MODEL}\", \"checkpoint\": \"${CHECKPOINT}\", \"recipe\": \"llamacpp\", \"reasoning\": true}" \
+        > /tmp/pull_out.json 2>&1 || true
+}
+
 echo "[entrypoint] Pulling/registering model '${MODEL}' (checkpoint=${CHECKPOINT})..."
-curl -sf -X POST "http://localhost:${PORT}/api/v1/pull" \
-    -H "Content-Type: application/json" \
-    -d "{\"model_name\": \"${MODEL}\", \"checkpoint\": \"${CHECKPOINT}\", \"recipe\": \"llamacpp\", \"reasoning\": true}" \
-    > /tmp/pull_out.json 2>&1 || true
+pull_model
+
+# Verify the GGUF sha256 against HF's x-linked-etag: lemonade only checks the
+# file EXISTS, so a right-length bad transfer passes. Engineering by Metrum AI.
+verify_gguf_checksum() {
+    repo="${CHECKPOINT%%:*}"
+    variant="${CHECKPOINT#*:}"
+    gguf=$(find /root/.cache/huggingface -name "*${variant}*.gguf" 2>/dev/null | head -1)
+    GGUF_PATH="$gguf"
+    [ -n "$gguf" ] || { echo "[entrypoint] checksum: no GGUF found, skipping."; return 0; }
+
+    expected=$(curl -sI --max-time 30 \
+        "https://huggingface.co/${repo}/resolve/main/$(basename "$gguf")" 2>/dev/null \
+        | tr -d '\r' | awk -F'"' '/^x-linked-etag:/ {print $2}')
+    if [ -z "$expected" ]; then
+        echo "[entrypoint] checksum: could not reach HuggingFace, skipping verification." >&2
+        return 0
+    fi
+
+    echo "[entrypoint] checksum: verifying $(basename "$gguf") (this reads the whole file)..."
+    actual=$(sha256sum "$gguf" | cut -d' ' -f1)
+    if [ "$actual" = "$expected" ]; then
+        echo "[entrypoint] checksum: OK ($actual)"
+        return 0
+    fi
+
+    echo "[entrypoint] ============================================================" >&2
+    echo "[entrypoint] ERROR: GGUF CHECKSUM MISMATCH -- the model file is corrupt." >&2
+    echo "[entrypoint]   file:     $gguf" >&2
+    echo "[entrypoint]   expected: $expected" >&2
+    echo "[entrypoint]   actual:   $actual" >&2
+    echo "[entrypoint] A corrupt model still loads and generates, but produces" >&2
+    echo "[entrypoint] garbage ('?') output. Delete the file and restart to re-pull." >&2
+    echo "[entrypoint] Set LEMONADE_SKIP_CHECKSUM=1 to bypass this check." >&2
+    echo "[entrypoint] ============================================================" >&2
+    return 1
+}
+
+# Detect-only is useless: a bad file still loads and serves garbage. Delete,
+# re-pull once, re-verify, then fail hard. Engineering by Metrum AI.
+if [ "${LEMONADE_SKIP_CHECKSUM:-0}" = "1" ]; then
+    echo "[entrypoint] checksum: skipped (LEMONADE_SKIP_CHECKSUM=1)."
+elif verify_gguf_checksum; then
+    :
+else
+    echo "[entrypoint] checksum: deleting corrupt file and re-pulling once..." >&2
+    [ -n "$GGUF_PATH" ] && rm -f "$GGUF_PATH"
+    pull_model
+    if verify_gguf_checksum; then
+        echo "[entrypoint] checksum: re-pull succeeded, model verified."
+    else
+        echo "[entrypoint] FATAL: model still corrupt after re-pull. Refusing to serve" >&2
+        echo "[entrypoint] a model that would produce garbage output. Check network/disk," >&2
+        echo "[entrypoint] or set LEMONADE_SKIP_CHECKSUM=1 to start anyway." >&2
+        exit 1
+    fi
+fi
 
 # Load the model with the specified backend
 echo "[entrypoint] Loading model '${MODEL}' with backend '${BACKEND}'..."

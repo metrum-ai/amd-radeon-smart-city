@@ -28,7 +28,7 @@ services:
     volumes:
       - timescaledb_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-smartcity_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -147,7 +147,7 @@ services:
       - /opt/smartcity/lemonade/recipe:/root/.cache/lemonade
       - ./scripts/lemonade-entrypoint.sh:/entrypoint.sh:ro
     environment:
-      LEMONADE_LLAMACPP_BACKEND: rocm
+      LEMONADE_LLAMACPP_BACKEND: ${LEMONADE_LLAMACPP_BACKEND:-rocm}
       ROCR_VISIBLE_DEVICES: "${LEMONADE_GPU_ID:-1}"
       HSA_OVERRIDE_GFX_VERSION: "12.0.1"
       LEMONADE_MODEL: ${LEMONADE_MODEL:-user.Qwen3-30B-A3B-UD-Q4_K_XL}
@@ -285,8 +285,10 @@ services:
       - ./smart_city/metrics/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     depends_on:
+      # service_started not service_healthy: api's health now reflects DB
+      # status too; metrics should keep working even if the DB is down.
       api:
-        condition: service_healthy
+        condition: service_started
       amd-device-metrics-exporter:
         condition: service_started
       node-exporter:
@@ -384,10 +386,22 @@ services:
       # to "hardware" only if you have profiled VCN headroom for it.
       DECODE_MODE: "${DECODE_MODE:-hardware}"
       HW_DECODE_VAAPI_GPU: "${HW_DECODE_VAAPI_GPU:-1}"
+      HW_DECODE_VAAPI_GPUS: "${HW_DECODE_VAAPI_GPUS:-}"
+      DENSITY_REPLICAS: "${DENSITY_REPLICAS:-1}"
+      DENSITY_PHYSICAL_GPUS: "${DENSITY_PHYSICAL_GPUS:-}"
       HW_DECODE_MAX_STREAMS: "${HW_DECODE_MAX_STREAMS:-}"
       HW_DECODE_STAGGER_MS: "${HW_DECODE_STAGGER_MS:-200}"
+      RTSP_INGEST_QUEUE_BUFFERS: "${RTSP_INGEST_QUEUE_BUFFERS:-60}"
+      OMP_NUM_THREADS: "${OMP_NUM_THREADS:-1}"
+      OPENBLAS_NUM_THREADS: "${OPENBLAS_NUM_THREADS:-1}"
+      MKL_NUM_THREADS: "${MKL_NUM_THREADS:-1}"
+      NUMEXPR_NUM_THREADS: "${NUMEXPR_NUM_THREADS:-1}"
+      OPENCV_FOR_THREADS_NUM: "${OPENCV_FOR_THREADS_NUM:-1}"
       ENCODE_MODE: "${ENCODE_MODE:-software}"
       PAIRED_OUTPUT_FPS: "${PAIRED_OUTPUT_FPS:-30}"
+      # Diagnostics, off by default: per-batch timing / pre-NMS candidate counts.
+      YOLO_PROFILE_BATCH: "${YOLO_PROFILE_BATCH:-0}"
+      YOLO_DEBUG_CANDIDATES: "${YOLO_DEBUG_CANDIDATES:-0}"
       PIPELINE_STATS_FILE: "/pipeline_stats/pipeline_stats.json"
       YOLO_START_GPU: ${YOLO_GPU_ID:-0}
       DENSITY_PHYSICAL_GPU: ${DMCOUNT_GPU_ID:-1}
@@ -428,6 +442,8 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        VITE_ICE_SERVERS: ${VITE_ICE_SERVERS:-}
     container_name: smartcity_frontend
     ports:
       - "${GATEWAY_HTTP_PORT:-5173}:80"
@@ -436,8 +452,14 @@ services:
       # advertises reachable ICE candidates for remote browsers.
       - "8189:8189"
     depends_on:
-      - api
-      - mediamtx
+      # service_started not service_healthy: nginx resolves upstreams lazily
+      # (see nginx.conf), so the UI loads even if api's DB is down.
+      api:
+        condition: service_started
+      mediamtx:
+        condition: service_started
+      prometheus:
+        condition: service_started
     logging: *default-logging
     restart: unless-stopped
 
